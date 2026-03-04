@@ -1,0 +1,186 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 15% 5%;
+    --foreground: 210 40% 95%;
+    --card: 220 15% 8%;
+    --card-foreground: 210 40% 95%;
+    --popover: 220 15% 8%;
+    --popover-foreground: 210 40% 95%;
+    --primary: 195 100% 50%;
+    --primary-foreground: 220 15% 5%;
+    --secondary: 220 15% 12%;
+    --secondary-foreground: 210 40% 85%;
+    --muted: 220 15% 12%;
+    --muted-foreground: 215 20% 55%;
+    --accent: 195 100% 50%;
+    --accent-foreground: 220 15% 5%;
+    --destructive: 350 100% 57%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 220 15% 15%;
+    --input: 220 15% 15%;
+    --ring: 195 100% 50%;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: hsl(220 15% 8%);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: hsl(220 15% 20%);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(195 100% 50% / 0.4);
+  }
+}
+
+@layer components {
+  .neon-border-green {
+    border-color: #00ff88;
+    box-shadow: 0 0 8px #00ff8844, inset 0 0 8px #00ff8811;
+  }
+
+  .neon-border-cyan {
+    border-color: #00e5ff;
+    box-shadow: 0 0 8px #00e5ff44, inset 0 0 8px #00e5ff11;
+  }
+
+  .neon-border-red {
+    border-color: #ff3355;
+    box-shadow: 0 0 8px #ff335544, inset 0 0 8px #ff335511;
+  }
+
+  .neon-border-yellow {
+    border-color: #ffcc00;
+    box-shadow: 0 0 8px #ffcc0044, inset 0 0 8px #ffcc0011;
+  }
+
+  .neon-text-green {
+    color: #00ff88;
+    text-shadow: 0 0 10px #00ff8888;
+  }
+
+  .neon-text-cyan {
+    color: #00e5ff;
+    text-shadow: 0 0 10px #00e5ff88;
+  }
+
+  .neon-text-red {
+    color: #ff3355;
+    text-shadow: 0 0 10px #ff335588;
+  }
+
+  .neon-text-yellow {
+    color: #ffcc00;
+    text-shadow: 0 0 10px #ffcc0088;
+  }
+
+  .glass-card {
+    background: hsl(220 15% 8% / 0.8);
+    backdrop-filter: blur(12px);
+    border: 1px solid hsl(220 15% 18%);
+  }
+
+  .sidebar-item {
+    @apply flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-all duration-200;
+    @apply text-muted-foreground hover:text-foreground hover:bg-secondary;
+  }
+
+  .sidebar-item.active {
+    @apply bg-secondary text-foreground;
+    border-left: 2px solid #00e5ff;
+    box-shadow: inset 0 0 20px #00e5ff08;
+  }
+
+  .status-dot {
+    @apply inline-block w-2 h-2 rounded-full;
+  }
+
+  .status-dot-green {
+    @apply bg-neon-green;
+    box-shadow: 0 0 6px #00ff88;
+    animation: pulse_neon 2s ease-in-out infinite;
+  }
+
+  .status-dot-cyan {
+    @apply bg-neon-cyan;
+    box-shadow: 0 0 6px #00e5ff;
+    animation: pulse_neon 2s ease-in-out infinite;
+  }
+
+  .status-dot-red {
+    @apply bg-neon-red;
+    box-shadow: 0 0 6px #ff3355;
+    animation: pulse_neon 1.5s ease-in-out infinite;
+  }
+
+  .status-dot-yellow {
+    @apply bg-neon-yellow;
+    box-shadow: 0 0 6px #ffcc00;
+  }
+
+  .status-dot-gray {
+    @apply bg-gray-600;
+  }
+
+  .pipeline-node {
+    @apply glass-card rounded-xl p-4 cursor-pointer transition-all duration-300;
+    @apply hover:border-cyan-500/50;
+  }
+
+  .pipeline-node:hover {
+    box-shadow: 0 0 20px #00e5ff22;
+    transform: translateY(-1px);
+  }
+
+  .pipeline-node.active {
+    border-color: #00e5ff80;
+    box-shadow: 0 0 20px #00e5ff33;
+  }
+
+  .run-btn {
+    @apply relative overflow-hidden rounded-xl border-2 p-5 text-left transition-all duration-300;
+    @apply flex flex-col gap-2 cursor-pointer;
+  }
+
+  .run-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 30px currentColor / 0.2;
+  }
+
+  .run-btn::before {
+    content: '';
+    @apply absolute inset-0 opacity-0 transition-opacity duration-300;
+    background: radial-gradient(circle at 50% 50%, currentColor 0%, transparent 70%);
+  }
+
+  .run-btn:hover::before {
+    opacity: 0.05;
+  }
+}
