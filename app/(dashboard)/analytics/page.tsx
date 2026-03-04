@@ -86,7 +86,7 @@ export default function AnalyticsPage() {
   ].filter((d) => d.value > 0)
 
   // Sources
-  const sourceData = countBy(leads, 'source')
+  const sourceData = countBy(leads, 'source_slug')
 
   // Warmth distribution
   const warmthData = countBy(leads, 'warmth').map((d, i) => ({
@@ -135,7 +135,7 @@ export default function AnalyticsPage() {
         <NeonCard>
           <h3 className="text-sm font-semibold mb-4">Лиды по источнику</h3>
           {sourceData.length === 0 ? (
-            <EmptyState title="Нет данных" description="Поле source отсутствует" />
+            <EmptyState title="Нет данных" description="Нет лидов с заполненным source_slug" />
           ) : (
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={sourceData} layout="vertical" margin={{ left: 0 }}>
@@ -162,7 +162,7 @@ export default function AnalyticsPage() {
         <NeonCard>
           <h3 className="text-sm font-semibold mb-4">Распределение по интенту</h3>
           {warmthData.length === 0 ? (
-            <EmptyState title="Нет данных" description="Поле warmth отсутствует" />
+            <EmptyState title="Нет данных" description="Нет лидов с заполненным warmth" />
           ) : (
             <ResponsiveContainer width="100%" height={220}>
               <PieChart>

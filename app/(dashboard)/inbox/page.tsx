@@ -52,7 +52,7 @@ export default function InboxPage() {
       const params: Record<string, string> = { name: 'inbox', tab }
       if (filters.warmth) params.warmth = filters.warmth
       if (filters.source) params.source = filters.source
-      if (filters.country) params.country = filters.country
+      // country is not present in all views — filtered client-side below
       if (filters.status) params.status = filters.status
       if (filters.search) params.search = filters.search
       if (filters.scoreMin) params.scoreMin = filters.scoreMin
@@ -73,7 +73,7 @@ export default function InboxPage() {
     loadTab(activeTab)
   }, [activeTab, loadTab])
 
-  // Client-side filter for search/score (fast path)
+  // Client-side filter for search and fields that may not exist in all views
   const displayLeads = useMemo(() => {
     let leads = leadsMap[activeTab]
     if (filters.search) {
@@ -85,8 +85,13 @@ export default function InboxPage() {
           l.snippet?.toLowerCase().includes(q)
       )
     }
+    // country may be absent in some views — apply client-side so the table is never hidden
+    if (filters.country) {
+      const q = filters.country.toLowerCase()
+      leads = leads.filter((l) => l.country?.toLowerCase().includes(q))
+    }
     return leads
-  }, [leadsMap, activeTab, filters.search])
+  }, [leadsMap, activeTab, filters.search, filters.country])
 
   function handleOutcomeSet(leadId: string | number, outcome: string) {
     setOutcomes((prev) => ({ ...prev, [leadId]: outcome }))

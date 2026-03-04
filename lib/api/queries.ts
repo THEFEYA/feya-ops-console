@@ -36,8 +36,8 @@ export async function getInbox(
 
   // Best-effort filters — only applied if column may exist
   if (opts.warmth) query = query.ilike('warmth', opts.warmth)
-  if (opts.source) query = query.ilike('source', `%${opts.source}%`)
-  if (opts.country) query = query.ilike('country', `%${opts.country}%`)
+  if (opts.source) query = query.ilike('source_slug', `%${opts.source}%`)
+  // country is not in all views — filtering is done client-side in the UI
   if (opts.status) query = query.eq('status', opts.status)
   if (opts.search) query = query.or(`title.ilike.%${opts.search}%,url.ilike.%${opts.search}%`)
   if (opts.scoreMin != null) query = query.gte('score', opts.scoreMin)
@@ -104,7 +104,7 @@ export async function getPipelineNodeStats() {
 export async function getLeadAnalytics() {
   const sb = createAdminClient()
   // Fetch leads with outcome info for charts
-  const { data: leads } = await sb.from('leads').select('source, warmth, country, created_at, score').limit(5000)
+  const { data: leads } = await sb.from('leads').select('source_slug, warmth, country, created_at, score').limit(5000)
   const { data: outcomes } = await sb.from('lead_outcomes').select('outcome, created_at').limit(5000)
   return { leads: leads ?? [], outcomes: outcomes ?? [] }
 }

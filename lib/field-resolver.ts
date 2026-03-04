@@ -47,7 +47,7 @@ export function normaliseLead(row: AnyRecord): NormalisedLead {
   const domain = resolveField<string>(row, 'domain', 'source_domain', 'host')
   const score = resolveField<number>(row, 'score', 'lead_score', 'intent_score', 'quality_score')
   const warmth = resolveField<string>(row, 'warmth', 'warmth_level', 'intent', 'tier')
-  const source = resolveField<string>(row, 'source', 'source_name', 'channel', 'platform')
+  const source = resolveField<string>(row, 'source_slug', 'source', 'source_name', 'channel', 'platform')
   const country = resolveField<string>(row, 'country', 'geo', 'country_code', 'location')
   const status = resolveField<string>(row, 'status', 'state', 'outcome', 'stage')
   const created_at = resolveField<string>(row, 'created_at', 'inserted_at', 'detected_at', 'ts', 'timestamp')
