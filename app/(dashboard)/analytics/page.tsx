@@ -29,10 +29,16 @@ interface KpiData {
   [key: string]: unknown
 }
 
-function countBy<T extends AnyRecord>(arr: T[], key: string): { name: string; value: number }[] {
+/** Count by key; if key is missing on every row, skip "Неизвестно" rows so the chart stays empty */
+function countBy<T extends AnyRecord>(arr: T[], ...keys: string[]): { name: string; value: number }[] {
   const counts: Record<string, number> = {}
   for (const item of arr) {
-    const v = String(item[key] ?? 'Неизвестно')
+    // Try each candidate key in order; skip if all are nullish
+    let v: string | undefined
+    for (const k of keys) {
+      if (item[k] != null && item[k] !== '') { v = String(item[k]); break }
+    }
+    if (!v) continue
     counts[v] = (counts[v] ?? 0) + 1
   }
   return Object.entries(counts)
@@ -85,8 +91,8 @@ export default function AnalyticsPage() {
     { name: 'Отклонено', value: rejected || Number(kpi?.rejected_today ?? 0), fill: '#ff3355' },
   ].filter((d) => d.value > 0)
 
-  // Sources
-  const sourceData = countBy(leads, 'source_slug')
+  // Sources — try source_slug first, then source as fallback
+  const sourceData = countBy(leads, 'source_slug', 'source')
 
   // Warmth distribution
   const warmthData = countBy(leads, 'warmth').map((d, i) => ({
@@ -98,7 +104,8 @@ export default function AnalyticsPage() {
   const domainData = countBy(leads, 'domain')
 
   // Geo
-  const geoData = countBy(leads, 'country').filter((d) => d.name !== 'Неизвестно' && d.name !== 'undefined')
+  // countBy already skips nullish values, so no extra filter needed
+  const geoData = countBy(leads, 'country')
 
   const tooltipStyle = {
     backgroundColor: 'hsl(220 15% 10%)',

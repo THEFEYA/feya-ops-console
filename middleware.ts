@@ -11,8 +11,9 @@ export async function middleware(req: NextRequest) {
   // Allow public/static paths
   if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) return NextResponse.next()
 
-  // Skip token check if disabled
-  if (process.env.FEYA_DASH_TOKEN_REQUIRED === 'false') return NextResponse.next()
+  // Skip token check if disabled — parse as boolean to handle 'false'/'False'/'FALSE' etc.
+  const tokenRequired = (process.env.FEYA_DASH_TOKEN_REQUIRED ?? 'true').trim().toLowerCase() === 'true'
+  if (!tokenRequired) return NextResponse.next()
 
   // Get token from ?t= param or cookie
   const tokenParam = req.nextUrl.searchParams.get('t')

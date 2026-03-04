@@ -18,7 +18,8 @@ export function extractToken(req: NextRequest): string {
  * Validate request token. Returns true if valid or if token check is disabled.
  */
 export async function authorizeRequest(req: NextRequest): Promise<boolean> {
-  if (process.env.FEYA_DASH_TOKEN_REQUIRED === 'false') return true
+  const tokenRequired = (process.env.FEYA_DASH_TOKEN_REQUIRED ?? 'true').trim().toLowerCase() === 'true'
+  if (!tokenRequired) return true
   const token = extractToken(req)
   return validateDashboardToken(token)
 }

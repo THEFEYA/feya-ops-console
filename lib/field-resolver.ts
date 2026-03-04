@@ -27,6 +27,7 @@ export interface NormalisedLead {
   score?: number
   warmth?: string
   source?: string
+  source_slug?: string  // same value as source; kept for analytics page countBy
   country?: string
   status?: string
   created_at?: string
@@ -46,8 +47,10 @@ export function normaliseLead(row: AnyRecord): NormalisedLead {
   const url = resolveField<string>(row, 'url', 'link', 'source_url', 'href') ?? ''
   const domain = resolveField<string>(row, 'domain', 'source_domain', 'host')
   const score = resolveField<number>(row, 'score', 'lead_score', 'intent_score', 'quality_score')
-  const warmth = resolveField<string>(row, 'warmth', 'warmth_level', 'intent', 'tier')
-  const source = resolveField<string>(row, 'source_slug', 'source', 'source_name', 'channel', 'platform')
+  const warmth = String(row['warmth'] ?? resolveField<string>(row, 'warmth_level', 'intent', 'tier') ?? '')  || undefined
+  const resolvedSource = resolveField<string>(row, 'source_slug', 'source', 'source_name', 'channel', 'platform')
+  const source = resolvedSource
+  const source_slug = resolvedSource
   const country = resolveField<string>(row, 'country', 'geo', 'country_code', 'location')
   const status = resolveField<string>(row, 'status', 'state', 'outcome', 'stage')
   const created_at = resolveField<string>(row, 'created_at', 'inserted_at', 'detected_at', 'ts', 'timestamp')
@@ -66,6 +69,7 @@ export function normaliseLead(row: AnyRecord): NormalisedLead {
     score,
     warmth,
     source,
+    source_slug,
     country,
     status,
     created_at,
