@@ -104,7 +104,8 @@ export async function getPipelineNodeStats() {
 export async function getLeadAnalytics() {
   const sb = createAdminClient()
   // Fetch leads with outcome info for charts
-  const { data: leads } = await sb.from('leads').select('source_slug, warmth, country, created_at, score').limit(5000)
+  // Select both source_slug and source — whichever the table actually has will be non-null
+  const { data: leads } = await sb.from('leads').select('source_slug, source, warmth, country, created_at, score').limit(5000)
   const { data: outcomes } = await sb.from('lead_outcomes').select('outcome, created_at').limit(5000)
   return { leads: leads ?? [], outcomes: outcomes ?? [] }
 }
