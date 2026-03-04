@@ -1,6 +1,15 @@
+import { redirect } from 'next/navigation'
 import { ShieldOff } from 'lucide-react'
 
+export const dynamic = 'force-dynamic'
+
 export default function NoAccessPage() {
+  // If token auth is disabled, visiting /no-access makes no sense — bounce to the main page
+  const tokenRequired = (process.env.FEYA_DASH_TOKEN_REQUIRED ?? 'true').trim().toLowerCase() === 'true'
+  if (!tokenRequired) {
+    redirect('/flow')
+  }
+
   return (
     <div className="min-h-screen bg-background flex items-center justify-center">
       <div className="text-center space-y-6 max-w-md px-4">

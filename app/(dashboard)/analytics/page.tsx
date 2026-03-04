@@ -1,5 +1,8 @@
 'use client'
 
+// Force server-side rendering on every request — never statically cached
+export const dynamic = 'force-dynamic'
+
 import { useEffect, useState } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -29,7 +32,16 @@ interface KpiData {
   [key: string]: unknown
 }
 
-/** Count by key; if key is missing on every row, skip "Неизвестно" rows so the chart stays empty */
+interface DiagEntry {
+  url: string
+  status?: number
+  statusText?: string
+  responseText?: string
+  count?: number
+  keys?: string[]
+}
+
+/** Count by key; if key is missing on every row, skip nullish rows so the chart stays empty */
 function countBy<T extends AnyRecord>(arr: T[], ...keys: string[]): { name: string; value: number }[] {
   const counts: Record<string, number> = {}
   for (const item of arr) {
@@ -51,21 +63,47 @@ export default function AnalyticsPage() {
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null)
   const [kpi, setKpi] = useState<KpiData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [diags, setDiags] = useState<DiagEntry[]>([])
 
   useEffect(() => {
     async function load() {
+      const entries: DiagEntry[] = []
       try {
+        const analyticsUrl = buildApiUrl('/api/sb/query', { name: 'lead_analytics' })
+        const kpiUrl = buildApiUrl('/api/sb/query', { name: 'kpi_today' })
         const [analyticsRes, kpiRes] = await Promise.all([
-          fetch(buildApiUrl('/api/sb/query', { name: 'lead_analytics' })),
-          fetch(buildApiUrl('/api/sb/query', { name: 'kpi_today' })),
+          fetch(analyticsUrl, { cache: 'no-store' }),
+          fetch(kpiUrl, { cache: 'no-store' }),
         ])
-        const analyticsJson = await analyticsRes.json()
-        const kpiJson = await kpiRes.json()
-        setAnalytics(analyticsJson.data)
-        setKpi(kpiJson.data)
+
+        if (!analyticsRes.ok) {
+          const responseText = (await analyticsRes.text()).slice(0, 1000)
+          entries.push({ url: analyticsUrl, status: analyticsRes.status, statusText: analyticsRes.statusText, responseText })
+        } else {
+          const analyticsJson = await analyticsRes.json()
+          const data: AnalyticsData = analyticsJson.data
+          setAnalytics(data)
+          if (data) {
+            const leads = data.leads ?? []
+            entries.push({
+              url: analyticsUrl,
+              count: leads.length,
+              keys: leads.length > 0 ? Object.keys(leads[0]) : [],
+            })
+          }
+        }
+
+        if (!kpiRes.ok) {
+          const responseText = (await kpiRes.text()).slice(0, 500)
+          entries.push({ url: kpiUrl, status: kpiRes.status, statusText: kpiRes.statusText, responseText })
+        } else {
+          const kpiJson = await kpiRes.json()
+          setKpi(kpiJson.data)
+        }
       } catch (e) {
         console.error(e)
       } finally {
+        setDiags(entries)
         setLoading(false)
       }
     }
@@ -117,6 +155,38 @@ export default function AnalyticsPage() {
 
   return (
     <div className="space-y-6 animate-fade-in">
+      {/* Diagnostics block */}
+      {diags.length > 0 && (
+        <div className="rounded-lg border border-yellow-500/40 bg-yellow-500/5 p-3 text-xs font-mono space-y-3">
+          <p className="font-semibold text-yellow-400">⚑ Диагностика запросов</p>
+          {diags.map((d, i) => (
+            <div key={i} className="space-y-0.5">
+              <p className="text-muted-foreground break-all">URL: {d.url}</p>
+              {d.status !== undefined ? (
+                <>
+                  <p className="text-red-400">HTTP {d.status} {d.statusText}</p>
+                  {d.responseText && (
+                    <pre className="text-red-300 whitespace-pre-wrap break-all max-h-40 overflow-auto">
+                      {d.responseText}
+                    </pre>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p className="text-muted-foreground">Записей: {d.count}</p>
+                  {d.keys && d.keys.length > 0 && (
+                    <p className="text-muted-foreground">Поля: {d.keys.join(', ')}</p>
+                  )}
+                  {d.keys && d.keys.length === 0 && (
+                    <p className="text-yellow-400">Массив пустой — нет данных в таблице leads</p>
+                  )}
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Funnel */}
       <NeonCard>
         <h3 className="text-sm font-semibold mb-4">Воронка лидов</h3>

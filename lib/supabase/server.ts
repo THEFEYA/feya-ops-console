@@ -33,8 +33,9 @@ export async function validateDashboardToken(token: string): Promise<boolean> {
   const envToken = process.env.FEYA_DASH_TOKEN
   if (envToken && token === envToken) return true
 
-  // Skip RPC if token required=false
-  if (process.env.FEYA_DASH_TOKEN_REQUIRED === 'false') return true
+  // Skip RPC if token required=false (same boolean parsing as middleware/auth)
+  const tokenRequired = (process.env.FEYA_DASH_TOKEN_REQUIRED ?? 'true').trim().toLowerCase() === 'true'
+  if (!tokenRequired) return true
 
   // Try Supabase RPC fallback
   try {
