@@ -1,5 +1,8 @@
 'use client'
 
+// Force server-side rendering on every request — never statically cached
+export const dynamic = 'force-dynamic'
+
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { LeadTable } from '@/components/inbox/LeadTable'
@@ -28,6 +31,17 @@ const EMPTY_FILTERS: InboxFilters = {
   scoreMax: '',
 }
 
+interface DiagInfo {
+  url: string
+  // HTTP error fields
+  status?: number
+  statusText?: string
+  responseText?: string
+  // Empty-OK fields
+  count?: number
+  keys?: string[]
+}
+
 export default function InboxPage() {
   const [activeTab, setActiveTab] = useState<TabKey>('b2b_hot')
   const [leadsMap, setLeadsMap] = useState<Record<TabKey, NormalisedLead[]>>({
@@ -42,12 +56,19 @@ export default function InboxPage() {
     event_review: false,
     extract_people: false,
   })
+  const [diagMap, setDiagMap] = useState<Record<TabKey, DiagInfo | null>>({
+    b2b_hot: null,
+    people_hot: null,
+    event_review: null,
+    extract_people: null,
+  })
   const [filters, setFilters] = useState<InboxFilters>(EMPTY_FILTERS)
   const [selectedLead, setSelectedLead] = useState<NormalisedLead | null>(null)
   const [outcomes, setOutcomes] = useState<Record<string | number, string>>({})
 
   const loadTab = useCallback(async (tab: TabKey) => {
     setLoading((prev) => ({ ...prev, [tab]: true }))
+    setDiagMap((prev) => ({ ...prev, [tab]: null }))
     try {
       const params: Record<string, string> = { name: 'inbox', tab }
       if (filters.warmth) params.warmth = filters.warmth
@@ -58,9 +79,34 @@ export default function InboxPage() {
       if (filters.scoreMin) params.scoreMin = filters.scoreMin
       if (filters.scoreMax) params.scoreMax = filters.scoreMax
 
-      const res = await fetch(buildApiUrl('/api/sb/query', params))
+      const url = buildApiUrl('/api/sb/query', params)
+      const res = await fetch(url, { cache: 'no-store' })
+
+      if (!res.ok) {
+        const responseText = (await res.text()).slice(0, 1000)
+        setDiagMap((prev) => ({
+          ...prev,
+          [tab]: { url, status: res.status, statusText: res.statusText, responseText },
+        }))
+        setLeadsMap((prev) => ({ ...prev, [tab]: [] }))
+        return
+      }
+
       const json = await res.json()
-      setLeadsMap((prev) => ({ ...prev, [tab]: json.data ?? [] }))
+      const rows: NormalisedLead[] = json.data ?? []
+      setLeadsMap((prev) => ({ ...prev, [tab]: rows }))
+
+      if (rows.length === 0) {
+        setDiagMap((prev) => ({
+          ...prev,
+          [tab]: { url, count: 0, keys: [] },
+        }))
+      } else if (rows.length > 0) {
+        setDiagMap((prev) => ({
+          ...prev,
+          [tab]: { url, count: rows.length, keys: Object.keys(rows[0]) },
+        }))
+      }
     } catch (e) {
       console.error(e)
     } finally {
@@ -104,6 +150,8 @@ export default function InboxPage() {
     }))
   }
 
+  const diag = diagMap[activeTab]
+
   return (
     <div className="flex gap-0 h-full animate-fade-in" style={{ height: 'calc(100vh - 104px)' }}>
       {/* Main table area */}
@@ -137,6 +185,31 @@ export default function InboxPage() {
               }}
             />
           </div>
+
+          {/* Diagnostics block */}
+          {diag && (
+            <div className="mb-3 rounded-lg border border-yellow-500/40 bg-yellow-500/5 p-3 text-xs font-mono space-y-1">
+              <p className="font-semibold text-yellow-400">⚑ Диагностика</p>
+              <p className="text-muted-foreground break-all">URL: {diag.url}</p>
+              {diag.status !== undefined ? (
+                <>
+                  <p className="text-red-400">HTTP {diag.status} {diag.statusText}</p>
+                  {diag.responseText && (
+                    <pre className="text-red-300 whitespace-pre-wrap break-all max-h-40 overflow-auto">
+                      {diag.responseText}
+                    </pre>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p className="text-muted-foreground">Записей: {diag.count}</p>
+                  {diag.keys && diag.keys.length > 0 && (
+                    <p className="text-muted-foreground">Поля: {diag.keys.join(', ')}</p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
 
           {TABS.map((t) => (
             <TabsContent key={t.key} value={t.key}>

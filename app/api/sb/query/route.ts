@@ -12,6 +12,10 @@ import {
   type InboxTab,
 } from '@/lib/api/queries'
 
+// Always dynamic — never cache API responses
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 const ALLOWED_QUERIES = [
   'kpi_today',
   'inbox',
