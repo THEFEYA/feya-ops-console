@@ -62,8 +62,8 @@ export async function GET(req: NextRequest) {
           search: req.nextUrl.searchParams.get('search') ?? undefined,
           status: req.nextUrl.searchParams.get('status') ?? undefined,
         }
-        data = await getInbox(tab, opts)
-        break
+        const { rows, _debug } = await getInbox(tab, opts)
+        return Response.json({ data: rows, _debug })
       }
 
       case 'runs_recent':
