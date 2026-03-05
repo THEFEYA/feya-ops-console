@@ -125,7 +125,7 @@ export async function getPipelineNodeStats() {
   // Aggregate tasks by pipeline stage/node
   const { data, error } = await sb
     .from('tasks')
-    .select('status, node, created_at')
+    .select('status, created_at')
     .limit(5000)
   if (error) console.error('[getPipelineNodeStats]', error.message)
   return data ?? []

@@ -19,11 +19,23 @@ import { AiPanel } from '@/components/analytics/AiPanel'
 import { AnalyticsProvider, useAnalytics, ALL_KNOWN_CHART_DEFAULTS, REQUIRED_LAYOUT, type ChartConfig } from '@/lib/analytics/context'
 import { AnalyticsErrorBoundary } from '@/components/analytics/ErrorBoundary'
 import { buildApiUrl } from '@/lib/utils'
-import { BarChart3, RefreshCw, Sun, Moon, Zap, RotateCcw } from 'lucide-react'
+import { BarChart3, RefreshCw, Sun, Moon, Zap, RotateCcw, Lock, Unlock } from 'lucide-react'
 
 const LS_KEY = 'feya_analytics_state'
 
 const NEON_COLORS = ['#00e5ff', '#00ff88', '#ffcc00', '#ff3355', '#cc44ff', '#4488ff', '#ff9900', '#44ffcc']
+
+// ─── Tooltip styles — high-contrast dark regardless of page theme ──────────────
+const tooltipStyle = {
+  backgroundColor: '#111827',
+  border: '1px solid rgba(255,255,255,0.15)',
+  borderRadius: '8px',
+  color: '#f9fafb',
+  fontSize: '12px',
+  boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+}
+const labelStyle = { color: '#e5e7eb', fontWeight: 600 }
+const itemStyle = { color: '#d1d5db' }
 
 type RollupRow = Record<string, unknown>
 type KpiRow = Record<string, unknown>
@@ -36,16 +48,6 @@ const PERIOD_OPTIONS: { key: Period; label: string; days: number }[] = [
   { key: '90d', label: '90 дн.', days: 90 },
   { key: 'custom', label: 'Свой', days: 0 },
 ]
-
-const tooltipStyle = {
-  backgroundColor: '#0d1117',
-  border: '1px solid rgba(255,255,255,0.12)',
-  borderRadius: '8px',
-  color: '#f0f4f8',
-  fontSize: '12px',
-}
-const labelStyle = { color: '#f0f4f8' }
-const itemStyle = { color: '#f0f4f8' }
 
 // ─── Data helpers ─────────────────────────────────────────────────────────────
 
@@ -127,6 +129,41 @@ function kpiVal(row: KpiRow, ...keys: string[]): number {
   return 0
 }
 
+// ─── Conversion helpers ────────────────────────────────────────────────────────
+
+function conversionBy(
+  rows: RollupRow[],
+  groupKey: string
+): { name: string; total: number; approved: number; rate: number }[] {
+  const totals: Record<string, number> = {}
+  const approved: Record<string, number> = {}
+  for (const r of rows) {
+    const k = String(r[groupKey] ?? '').trim()
+    if (!k) continue
+    totals[k] = (totals[k] ?? 0) + Number(r['leads_cnt'] ?? 0)
+    // Accept either explicit approved_cnt column or outcome='approved'
+    const approvedDelta =
+      r['approved_cnt'] !== undefined
+        ? Number(r['approved_cnt'] ?? 0)
+        : String(r['outcome'] ?? '') === 'approved'
+          ? Number(r['leads_cnt'] ?? 0)
+          : 0
+    approved[k] = (approved[k] ?? 0) + approvedDelta
+  }
+  const hasData = Object.values(approved).some((v) => v > 0)
+  if (!hasData) return []
+  return Object.entries(totals)
+    .filter(([, t]) => t > 0)
+    .map(([name, total]) => ({
+      name: name.slice(0, 22),
+      total,
+      approved: approved[name] ?? 0,
+      rate: Math.round(((approved[name] ?? 0) / total) * 1000) / 10,
+    }))
+    .sort((a, b) => b.rate - a.rate)
+    .slice(0, 8)
+}
+
 // ─── Pie label ────────────────────────────────────────────────────────────────
 
 function PieLabel({ cx, cy, midAngle, outerRadius, percent, name }: {
@@ -138,7 +175,7 @@ function PieLabel({ cx, cy, midAngle, outerRadius, percent, name }: {
   const x = cx + r * Math.cos(-midAngle * RADIAN)
   const y = cy + r * Math.sin(-midAngle * RADIAN)
   return (
-    <text x={x} y={y} fill="#e2e8f0" fontSize={10} textAnchor={x > cx ? 'start' : 'end'} dominantBaseline="central">
+    <text x={x} y={y} fill="#f9fafb" fontSize={10} fontWeight={500} textAnchor={x > cx ? 'start' : 'end'} dominantBaseline="central" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.8)' }}>
       {`${name.slice(0, 12)} ${(percent * 100).toFixed(0)}%`}
     </text>
   )
@@ -197,7 +234,7 @@ function UniversalChart({
             {labeledData.map((_, i) => <Cell key={i} fill={coloredData[i]?.fill ?? NEON_COLORS[i % NEON_COLORS.length]} />)}
           </Pie>
           <Tooltip contentStyle={tooltipStyle} itemStyle={itemStyle} />
-          <Legend formatter={(v) => <span style={{ color: '#d1d5db', fontSize: 11 }}>{v}</span>} />
+          <Legend formatter={(v) => <span style={{ color: '#e5e7eb', fontSize: 11, fontWeight: 500 }}>{v}</span>} />
         </PieChart>
       </ResponsiveContainer>
     )
@@ -293,6 +330,16 @@ function AnalyticsInner() {
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
 
+  // Toast notification for cross-filter actions
+  const [toast, setToast] = useState<string | null>(null)
+  const showToast = useCallback((msg: string) => {
+    setToast(msg)
+    setTimeout(() => setToast(null), 2500)
+  }, [])
+
+  // Lock filters — when on, chart clicks don't add new filters
+  const [filtersLocked, setFiltersLocked] = useState(false)
+
   // Drag & drop state for chart card reordering
   const [dragId, setDragId] = useState<string | null>(null)
   // Safe layout: always falls back to REQUIRED_LAYOUT, filters to known chart IDs only
@@ -318,9 +365,14 @@ function AnalyticsInner() {
 
   const handleCrossFilter = useCallback(
     (dimension: string, value: string) => {
+      if (filtersLocked) {
+        showToast('Фильтры заблокированы')
+        return
+      }
       dispatch({ type: 'TOGGLE_FILTER', payload: { dimension, value } })
+      showToast(`Фильтр: ${dimension}=${value}`)
     },
-    [dispatch]
+    [dispatch, filtersLocked, showToast]
   )
 
   // Sync period from context dateRange preset
@@ -474,12 +526,36 @@ function AnalyticsInner() {
   }
   function handleDragEnd() { try { setDragId(null) } catch { /* ignore */ } }
 
+  // Conversion data (client-side from rollup rows)
+  const convBySource = useMemo(() => conversionBy(rows, 'source_slug'), [rows])
+  const convByEvent = useMemo(() => conversionBy(rows, 'event'), [rows])
+
   return (
     <div className="space-y-4 animate-fade-in" data-theme={state.theme !== 'dark' ? state.theme : undefined}>
+      {/* Toast notification */}
+      {toast && (
+        <div className="fixed bottom-4 right-4 z-50 bg-gray-900 border border-neon-cyan/40 text-neon-cyan text-xs px-3 py-2 rounded-lg shadow-lg animate-fade-in pointer-events-none">
+          {toast}
+        </div>
+      )}
+
       {/* Top bar */}
       <div className="flex flex-wrap items-center gap-2 justify-between">
         {periodBar}
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Lock filters */}
+          <button
+            onClick={() => setFiltersLocked((v) => !v)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded border text-xs transition-colors ${
+              filtersLocked
+                ? 'bg-amber-500/20 border-amber-500/40 text-amber-400'
+                : 'border-border text-muted-foreground hover:text-foreground hover:border-border/80'
+            }`}
+            title={filtersLocked ? 'Фильтры заблокированы — клики не меняют фильтры' : 'Заблокировать фильтры'}
+          >
+            {filtersLocked ? <Lock size={13} /> : <Unlock size={13} />}
+            {filtersLocked ? 'Locked' : 'Lock'}
+          </button>
           {/* Theme switcher */}
           <button
             onClick={() => {
@@ -581,6 +657,98 @@ function AnalyticsInner() {
           <PivotTable rows={rows} onCrossFilter={handleCrossFilter} />
         </div>
       </div>
+
+      {/* Conversion block */}
+      {(convBySource.length > 0 || convByEvent.length > 0) && (
+        <div className="rounded-lg border border-border bg-card/50 overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-border/60 bg-secondary/30">
+            <span className="text-sm font-medium">Конверсия</span>
+            <span className="text-[10px] text-muted-foreground/60 ml-2">approved / всего лидов</span>
+          </div>
+          <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {convBySource.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-2">По источнику</p>
+                <div className="space-y-1.5">
+                  {convBySource.map((r) => (
+                    <div key={r.name} className="flex items-center gap-2">
+                      <button
+                        className="text-xs text-foreground/80 hover:text-neon-cyan transition-colors truncate w-28 text-left shrink-0"
+                        onClick={() => handleCrossFilter('source_slug', r.name)}
+                        title={`Фильтр: source_slug=${r.name}`}
+                      >
+                        {r.name}
+                      </button>
+                      <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-neon-cyan rounded-full transition-all"
+                          style={{ width: `${Math.min(r.rate, 100)}%` }}
+                        />
+                      </div>
+                      <span className="text-[10px] font-mono text-neon-cyan w-10 text-right shrink-0">
+                        {r.rate}%
+                      </span>
+                      <span className="text-[10px] text-muted-foreground shrink-0">
+                        {r.approved}/{r.total}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {convByEvent.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-2">По событию</p>
+                <div className="space-y-1.5">
+                  {convByEvent.map((r) => (
+                    <div key={r.name} className="flex items-center gap-2">
+                      <button
+                        className="text-xs text-foreground/80 hover:text-neon-cyan transition-colors truncate w-28 text-left shrink-0"
+                        onClick={() => handleCrossFilter('event', r.name)}
+                        title={`Фильтр: event=${r.name}`}
+                      >
+                        {r.name}
+                      </button>
+                      <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-neon-cyan rounded-full transition-all"
+                          style={{ width: `${Math.min(r.rate, 100)}%` }}
+                        />
+                      </div>
+                      <span className="text-[10px] font-mono text-neon-cyan w-10 text-right shrink-0">
+                        {r.rate}%
+                      </span>
+                      <span className="text-[10px] text-muted-foreground shrink-0">
+                        {r.approved}/{r.total}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          {/* Status/outcome quick filter */}
+          <div className="px-4 pb-4 flex flex-wrap items-center gap-2">
+            <span className="text-[10px] text-muted-foreground">Фильтр по исходу:</span>
+            {['approved', 'shortlisted', 'rejected'].map((outcome) => {
+              const active = state.filters.some((f) => f.dimension === 'outcome' && f.value === outcome)
+              return (
+                <button
+                  key={outcome}
+                  onClick={() => handleCrossFilter('outcome', outcome)}
+                  className={`px-2 py-0.5 rounded-full text-[10px] border transition-colors ${
+                    active
+                      ? 'bg-neon-cyan/20 border-neon-cyan/40 text-neon-cyan'
+                      : 'border-border text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {outcome}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -9,10 +9,18 @@ const DIM_LABELS: Record<string, string> = {
   bucket: 'Бакет',
   persona_tag: 'Персона',
   source_platform: 'Платформа',
+  lead_kind: 'Тип лида',
+  outcome: 'Исход',
+  status: 'Статус',
   day: 'День',
 }
 
-export function FilterChips() {
+interface Props {
+  /** Called when a cross-filter is toggled — used to show toast from parent */
+  onFilterToast?: (msg: string) => void
+}
+
+export function FilterChips({ onFilterToast }: Props) {
   const { state, dispatch, getLabel } = useAnalytics()
   const { filters } = state
 
@@ -29,7 +37,10 @@ export function FilterChips() {
           <span className="text-muted-foreground">{DIM_LABELS[f.dimension] ?? f.dimension}:</span>
           {getLabel(f.value, f.value)}
           <button
-            onClick={() => dispatch({ type: 'REMOVE_FILTER', payload: { dimension: f.dimension, value: f.value } })}
+            onClick={() => {
+              dispatch({ type: 'REMOVE_FILTER', payload: { dimension: f.dimension, value: f.value } })
+              onFilterToast?.(`Убран: ${DIM_LABELS[f.dimension] ?? f.dimension}=${getLabel(f.value, f.value)}`)
+            }}
             className="ml-0.5 text-neon-cyan/70 hover:text-neon-cyan transition-colors leading-none"
             aria-label="Убрать фильтр"
           >
