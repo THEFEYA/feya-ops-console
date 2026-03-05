@@ -17,6 +17,7 @@ import { ChartCard } from '@/components/analytics/ChartCard'
 import { PresetBar } from '@/components/analytics/PresetBar'
 import { AiPanel } from '@/components/analytics/AiPanel'
 import { AnalyticsProvider, useAnalytics, DEFAULT_CHART_CONFIGS, DEFAULT_LAYOUT, type ChartConfig } from '@/lib/analytics/context'
+import { AnalyticsErrorBoundary } from '@/components/analytics/ErrorBoundary'
 import { buildApiUrl } from '@/lib/utils'
 import { BarChart3, RefreshCw, Sun, Moon, Zap } from 'lucide-react'
 
@@ -451,19 +452,23 @@ function AnalyticsInner() {
   ].filter((c): c is { label: string; value: number } => c !== null && c.value > 0)
 
   // Drag handlers
-  function handleDragStart(id: string) { setDragId(id) }
-  function handleDragOver(e: React.DragEvent, overId: string) {
-    e.preventDefault()
-    if (!dragId || dragId === overId) return
-    const newLayout = [...layout]
-    const fromIdx = newLayout.indexOf(dragId)
-    const toIdx = newLayout.indexOf(overId)
-    if (fromIdx === -1 || toIdx === -1) return
-    newLayout.splice(fromIdx, 1)
-    newLayout.splice(toIdx, 0, dragId)
-    dispatch({ type: 'SET_LAYOUT', payload: newLayout })
+  function handleDragStart(id: string) {
+    try { setDragId(id) } catch { /* ignore */ }
   }
-  function handleDragEnd() { setDragId(null) }
+  function handleDragOver(e: React.DragEvent, overId: string) {
+    try {
+      e.preventDefault()
+      if (!dragId || dragId === overId) return
+      const newLayout = [...layout]
+      const fromIdx = newLayout.indexOf(dragId)
+      const toIdx = newLayout.indexOf(overId)
+      if (fromIdx === -1 || toIdx === -1) return
+      newLayout.splice(fromIdx, 1)
+      newLayout.splice(toIdx, 0, dragId)
+      dispatch({ type: 'SET_LAYOUT', payload: newLayout })
+    } catch { /* ignore */ }
+  }
+  function handleDragEnd() { try { setDragId(null) } catch { /* ignore */ } }
 
   return (
     <div className="space-y-4 animate-fade-in" data-theme={state.theme !== 'dark' ? state.theme : undefined}>
@@ -557,8 +562,12 @@ function AnalyticsInner() {
 
 export default function AnalyticsPage() {
   return (
-    <AnalyticsProvider>
-      <AnalyticsInner />
-    </AnalyticsProvider>
+    <AnalyticsErrorBoundary>
+      <AnalyticsProvider>
+        <AnalyticsErrorBoundary>
+          <AnalyticsInner />
+        </AnalyticsErrorBoundary>
+      </AnalyticsProvider>
+    </AnalyticsErrorBoundary>
   )
 }
