@@ -21,18 +21,20 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'insight is required' }, { status: 400 })
   }
 
-  // Best-effort save to Supabase — table may not exist
+  // Best-effort save to Supabase ai_memory table
+  // Schema: memory_id uuid PK, created_at, kind text, title text, tags text[], content jsonb
   try {
     if (process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
       const sb = createAdminClient()
-      await sb.from('ai_insights').insert({
-        insight,
-        context: context ?? null,
-        created_at: new Date().toISOString(),
+      await sb.from('ai_memory').insert({
+        kind: 'insight',
+        title: insight.slice(0, 120),
+        tags: [],
+        content: { text: insight, context: context ?? null },
       })
     }
   } catch {
-    // table may not exist yet — non-critical
+    // non-critical
   }
 
   return Response.json({ ok: true })

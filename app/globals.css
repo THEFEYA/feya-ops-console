@@ -27,6 +27,43 @@
   }
 }
 
+/* ─── Theme overrides via data-theme attribute ───────────────────────────── */
+[data-theme="light"] {
+  --background: 210 20% 96%;
+  --foreground: 220 20% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 220 20% 12%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 220 20% 12%;
+  --secondary: 210 16% 90%;
+  --secondary-foreground: 220 20% 20%;
+  --muted: 210 16% 90%;
+  --muted-foreground: 215 15% 45%;
+  --border: 210 16% 82%;
+  --input: 210 16% 82%;
+}
+
+[data-theme="neon"] {
+  --background: 260 20% 4%;
+  --foreground: 180 100% 90%;
+  --card: 260 20% 7%;
+  --card-foreground: 180 100% 90%;
+  --popover: 260 20% 7%;
+  --popover-foreground: 180 100% 90%;
+  --secondary: 260 20% 11%;
+  --secondary-foreground: 180 100% 75%;
+  --muted: 260 20% 11%;
+  --muted-foreground: 260 20% 50%;
+  --border: 260 20% 18%;
+  --input: 260 20% 18%;
+  --primary: 300 100% 60%;
+  --accent: 300 100% 60%;
+  --ring: 300 100% 60%;
+}
+
+[data-theme="neon"] .neon-border-cyan { border-color: #dd44ff; box-shadow: 0 0 12px #dd44ff55; }
+[data-theme="neon"] .neon-text-cyan { color: #dd44ff; text-shadow: 0 0 12px #dd44ffaa; }
+
 @layer base {
   * {
     @apply border-border;

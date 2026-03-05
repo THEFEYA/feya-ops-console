@@ -88,8 +88,16 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
           setExplainSource('api')
         } else {
           // Build fallback explanation from available fields
+          const contactStr = lead.contact_path ?? lead.business_website ?? lead.business_phone
+          const amenityRu = lead.amenity
+            ? (uiTermsCache?.[`amenity:${lead.amenity}`.toLowerCase()]
+                ?? uiTermsCache?.[lead.amenity.toLowerCase()]
+                ?? lead.amenity)
+            : null
           const parts = [
-            lead.contact_path && `Контакт для связи: ${lead.contact_path}`,
+            contactStr && `Контакт найден: ${contactStr}`,
+            lead.business_name && `Компания: ${lead.business_name}`,
+            amenityRu && `Тип объекта (OSM): ${amenityRu}`,
             lead.match_terms?.length && `Совпавшие триггеры: ${lead.match_terms.join(', ')}`,
             lead.evidence_text && `Доказательства: ${lead.evidence_text.slice(0, 300)}`,
             lead.snippet && `Контекст из источника: «${lead.snippet.slice(0, 200)}»`,
@@ -223,8 +231,8 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
           )}
         </div>
 
-        {/* Contact — primary CTA when contact_path is available */}
-        {(lead.contact_path || lead.username) && (
+        {/* Contact — primary CTA; B2B fallback when contact_path absent */}
+        {(lead.contact_path || lead.username || lead.business_website || lead.business_phone) && (
           <div>
             <p className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
               <MessageCircle className="w-3.5 h-3.5" /> Как связаться
@@ -233,18 +241,43 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
               {lead.contact_path && (
                 <a
                   href={lead.contact_path.startsWith('http') ? lead.contact_path : undefined}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  target="_blank" rel="noopener noreferrer"
                   className="flex items-center gap-2 text-xs bg-neon-cyan/10 border border-neon-cyan/30 rounded-lg px-3 py-2 hover:bg-neon-cyan/20 transition-colors"
                 >
                   <ExternalLink className="w-3.5 h-3.5 text-neon-cyan flex-shrink-0" />
                   <span className="text-neon-cyan font-medium truncate">{lead.contact_path}</span>
                 </a>
               )}
+              {/* B2B website fallback */}
+              {!lead.contact_path && lead.business_website && (
+                <a
+                  href={lead.business_website.startsWith('http') ? lead.business_website : `https://${lead.business_website}`}
+                  target="_blank" rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-xs bg-neon-cyan/10 border border-neon-cyan/30 rounded-lg px-3 py-2 hover:bg-neon-cyan/20 transition-colors"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-neon-cyan flex-shrink-0" />
+                  <span className="text-neon-cyan font-medium truncate">{lead.business_website}</span>
+                </a>
+              )}
+              {/* B2B phone */}
+              {lead.business_phone && (
+                <a href={`tel:${lead.business_phone}`}
+                  className="flex items-center gap-2 text-xs bg-neon-green/10 border border-neon-green/30 rounded-lg px-3 py-2 hover:bg-neon-green/20 transition-colors"
+                >
+                  <MessageCircle className="w-3.5 h-3.5 text-neon-green flex-shrink-0" />
+                  <span className="text-neon-green font-medium">{lead.business_phone}</span>
+                </a>
+              )}
               {lead.username && (
                 <div className="flex items-center gap-2 text-xs">
                   <span className="text-muted-foreground w-20 flex-shrink-0">Юзернейм:</span>
                   <span className="font-mono text-foreground/80">@{lead.username.replace(/^@/, '')}</span>
+                </div>
+              )}
+              {lead.business_name && (
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-muted-foreground w-20 flex-shrink-0">Компания:</span>
+                  <span className="text-foreground/80">{lead.business_name}</span>
                 </div>
               )}
             </div>
@@ -268,6 +301,18 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
           <p className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
             <Info className="w-3.5 h-3.5" /> Доказательства (почему это лид)
           </p>
+
+          {/* B2B amenity type (OSM) — translated */}
+          {lead.amenity && (
+            <div className="flex items-center gap-2 mb-2 text-xs">
+              <span className="text-muted-foreground">Тип места:</span>
+              <Badge variant="purple">
+                {uiTerms[`amenity:${lead.amenity}`.toLowerCase()]
+                  ?? uiTerms[lead.amenity.toLowerCase()]
+                  ?? lead.amenity}
+              </Badge>
+            </div>
+          )}
 
           {/* evidence_text — primary */}
           {lead.evidence_text && (

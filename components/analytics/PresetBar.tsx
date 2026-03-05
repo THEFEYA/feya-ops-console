@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { Save, ChevronDown, Star, Trash2 } from 'lucide-react'
 import { useAnalytics } from '@/lib/analytics/context'
-import { syncPresetToSupabase } from '@/lib/analytics/persist'
+import { savePresetToSupabase } from '@/lib/analytics/persist'
 
 export function PresetBar() {
   const { state, dispatch } = useAnalytics()
@@ -17,10 +17,9 @@ export function PresetBar() {
     dispatch({ type: 'SAVE_PRESET', payload: { name } })
     setSaveName('')
     setSaving(false)
-    // best-effort sync
-    const id = `preset_${Date.now()}`
+    // best-effort sync to Supabase
     const { presets, ...rest } = state
-    await syncPresetToSupabase(id, name, rest).catch(() => {})
+    await savePresetToSupabase(name, rest).catch(() => {})
   }
 
   const activePreset = state.presets.find((p) => p.id === state.activePreset)

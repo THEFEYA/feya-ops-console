@@ -29,20 +29,45 @@ export async function POST(req: NextRequest) {
 function composeAnswer(question: string, context: string): string {
   const q = question.toLowerCase()
 
-  if (q.includes('сколько') || q.includes('how many') || q.includes('total')) {
-    const match = context.match(/(\d+) лидов/)
-    if (match) return `По текущим данным: ${match[1]} лидов за выбранный период.`
+  if (q.includes('сколько') || q.includes('how many') || q.includes('total') || q.includes('всего')) {
+    const match = context.match(/(\d[\d\s]*) лидов/)
+    if (match) return `По текущим данным: ${match[1].trim()} лидов за выбранный период.`
   }
 
-  if (q.includes('score') || q.includes('оценк')) {
+  if (q.includes('score') || q.includes('оценк') || q.includes('скор')) {
     const match = context.match(/средний score ([\d.]+)/)
     if (match) return `Средний score в текущей выборке составляет ${match[1]}.`
   }
 
   if (q.includes('фильтр') || q.includes('filter')) {
-    if (context.includes('Фильтры не активны')) return 'Фильтры не активны. Нажмите на элемент графика для детализации.'
-    return `Активны следующие фильтры: ${context.match(/Активные фильтры: (.+?)\./)?.[1] ?? '—'}.`
+    if (context.includes('Фильтры не активны')) return 'Фильтры не активны. Кликните на элемент графика для детализации.'
+    const active = context.match(/Активные фильтры: (.+?)\./)?.[1] ?? '—'
+    return `Активны следующие фильтры: ${active}. Нажмите «Сбросить всё» в строке фильтров для очистки.`
   }
 
-  return `[FEYA Copilot — stub] Контекст: ${context}\n\nВопрос принят. Для полноценного анализа подключите LLM-провайдера в /api/ai/analyze.`
+  if (q.includes('источник') || q.includes('source')) {
+    const match = context.match(/Топ-источники: (.+?)\./)
+    if (match) return `Топ-источники в текущей выборке: ${match[1]}.`
+  }
+
+  if (q.includes('событи') || q.includes('event')) {
+    const match = context.match(/Топ-события: (.+?)\./)
+    if (match) return `Топ-события: ${match[1]}.`
+  }
+
+  if (q.includes('интент') || q.includes('warmth') || q.includes('горяч')) {
+    const match = context.match(/Интент: (.+?)\./)
+    if (match) return `Распределение интента: ${match[1]}.`
+  }
+
+  if (q.includes('рекоменд') || q.includes('совет') || q.includes('что делать')) {
+    const scoreMatcher = context.match(/средний score ([\d.]+)/)
+    const score = scoreMatcher ? Number(scoreMatcher[1]) : 0
+    if (score < 40) return 'Средний score низкий. Рекомендую проверить качество источников данных и уточнить фильтры поиска.'
+    if (score >= 70) return 'Высокий средний score — лиды качественные. Приоритизируйте обработку «горячих» лидов из топовых источников.'
+    return 'Средний score умеренный. Рекомендую отфильтровать по горячему интенту и сосредоточиться на топ-источниках.'
+  }
+
+  // Fallback with full context
+  return `На основе текущих данных:\n${context}\n\n⚠️ Это stub-ответ. Для полноценного AI-анализа подключите LLM-провайдера в /api/ai/analyze.`
 }

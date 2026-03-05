@@ -16,7 +16,7 @@ import { FilterChips } from '@/components/analytics/FilterChips'
 import { ChartCard } from '@/components/analytics/ChartCard'
 import { PresetBar } from '@/components/analytics/PresetBar'
 import { AiPanel } from '@/components/analytics/AiPanel'
-import { AnalyticsProvider, useAnalytics, DEFAULT_CHART_CONFIGS, type ChartConfig } from '@/lib/analytics/context'
+import { AnalyticsProvider, useAnalytics, DEFAULT_CHART_CONFIGS, DEFAULT_LAYOUT, type ChartConfig } from '@/lib/analytics/context'
 import { buildApiUrl } from '@/lib/utils'
 import { BarChart3, RefreshCw, Sun, Moon, Zap } from 'lucide-react'
 
@@ -152,8 +152,11 @@ function UniversalChart({
   rows: RollupRow[]
   onCrossFilter: (dimension: string, value: string) => void
 }) {
+  const { getLabel } = useAnalytics()
   const isTimeSeries = config.groupBy === 'day'
   const data = isTimeSeries ? dailySeries(rows, config.metric) : aggBy(rows, config.groupBy, config.metric)
+  // Formatter for axis ticks — shows label override but keeps raw value for cross-filter
+  const labelFmt = (v: string) => getLabel(v, v)
 
   if (data.length === 0) {
     return <p className="text-xs text-muted-foreground py-4 text-center">Нет данных по группировке «{config.groupBy}»</p>
@@ -165,28 +168,30 @@ function UniversalChart({
     if (name) onCrossFilter(config.groupBy, name)
   }
 
-  const handlePieClick = (d: { name?: string }) => {
-    if (d?.name) onCrossFilter(config.groupBy, d.name)
-  }
-
   const coloredData = data.map((d, i) => ({ ...d, fill: NEON_COLORS[i % NEON_COLORS.length] }))
+
+  const labeledData = coloredData.map((d) => ({ ...d, displayName: getLabel(d.name, d.name) }))
 
   if (config.type === 'pie') {
     return (
       <ResponsiveContainer width="100%" height={240}>
         <PieChart>
           <Pie
-            data={coloredData}
+            data={labeledData.map((d) => ({ ...d, name: d.displayName }))}
             cx="50%"
             cy="50%"
             outerRadius={80}
             dataKey="value"
             labelLine={false}
             label={PieLabel as unknown as boolean}
-            onClick={handlePieClick}
+            onClick={(d: { name?: string }) => {
+              // Find raw name for cross-filter
+              const raw = coloredData.find((c) => getLabel(c.name, c.name) === d?.name)?.name ?? d?.name
+              if (raw) onCrossFilter(config.groupBy, raw)
+            }}
             style={{ cursor: 'pointer' }}
           >
-            {coloredData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
+            {labeledData.map((_, i) => <Cell key={i} fill={coloredData[i]?.fill ?? NEON_COLORS[i % NEON_COLORS.length]} />)}
           </Pie>
           <Tooltip contentStyle={tooltipStyle} itemStyle={itemStyle} />
           <Legend formatter={(v) => <span style={{ color: '#d1d5db', fontSize: 11 }}>{v}</span>} />
@@ -221,9 +226,9 @@ function UniversalChart({
       <ResponsiveContainer width="100%" height={220}>
         <LineChart {...commonProps}>
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 15% 18%)" />
-          <XAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} />
+          <XAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} tickFormatter={labelFmt} />
           <YAxis tick={{ fill: '#9ca3af', fontSize: 10 }} />
-          <Tooltip contentStyle={tooltipStyle} labelStyle={labelStyle} itemStyle={itemStyle} />
+          <Tooltip contentStyle={tooltipStyle} labelStyle={labelStyle} itemStyle={itemStyle} labelFormatter={labelFmt} />
           <Line type="monotone" dataKey="value" name={config.metric} stroke="#00e5ff" strokeWidth={2} dot={false} />
         </LineChart>
       </ResponsiveContainer>
@@ -235,9 +240,9 @@ function UniversalChart({
       <ResponsiveContainer width="100%" height={220}>
         <AreaChart {...commonProps}>
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 15% 18%)" />
-          <XAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} />
+          <XAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} tickFormatter={labelFmt} />
           <YAxis tick={{ fill: '#9ca3af', fontSize: 10 }} />
-          <Tooltip contentStyle={tooltipStyle} labelStyle={labelStyle} itemStyle={itemStyle} />
+          <Tooltip contentStyle={tooltipStyle} labelStyle={labelStyle} itemStyle={itemStyle} labelFormatter={labelFmt} />
           <Area type="monotone" dataKey="value" name={config.metric} stroke="#00e5ff" fill="#00e5ff22" strokeWidth={2} />
         </AreaChart>
       </ResponsiveContainer>
@@ -252,8 +257,8 @@ function UniversalChart({
         <BarChart data={data} layout="vertical" margin={{ left: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 15% 18%)" />
           <XAxis type="number" tick={{ fill: '#9ca3af', fontSize: 10 }} />
-          <YAxis type="category" dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} width={100} />
-          <Tooltip contentStyle={tooltipStyle} labelStyle={labelStyle} itemStyle={itemStyle} />
+          <YAxis type="category" dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} width={100} tickFormatter={labelFmt} />
+          <Tooltip contentStyle={tooltipStyle} labelStyle={labelStyle} itemStyle={itemStyle} labelFormatter={labelFmt} />
           <Bar dataKey="value" name={config.metric} radius={[0, 4, 4, 0]} onClick={(d) => { if (d?.name) onCrossFilter(config.groupBy, String(d.name)) }} style={{ cursor: 'pointer' }}>
             {data.map((_, i) => <Cell key={i} fill={NEON_COLORS[i % NEON_COLORS.length]} />)}
           </Bar>
@@ -261,9 +266,9 @@ function UniversalChart({
       ) : (
         <BarChart data={data} margin={{ left: 0, right: 8 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 15% 18%)" />
-          <XAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} />
+          <XAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} tickFormatter={labelFmt} />
           <YAxis tick={{ fill: '#9ca3af', fontSize: 10 }} />
-          <Tooltip contentStyle={tooltipStyle} labelStyle={labelStyle} itemStyle={itemStyle} />
+          <Tooltip contentStyle={tooltipStyle} labelStyle={labelStyle} itemStyle={itemStyle} labelFormatter={labelFmt} />
           <Bar dataKey="value" name={config.metric} fill="#00e5ff" radius={[3, 3, 0, 0]} onClick={(d) => { if (d?.name) onCrossFilter(config.groupBy, String(d.name)) }} style={{ cursor: 'pointer' }}>
             {data.map((_, i) => <Cell key={i} fill={NEON_COLORS[i % NEON_COLORS.length]} />)}
           </Bar>
@@ -285,11 +290,26 @@ function AnalyticsInner() {
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
 
+  // Drag & drop state for chart card reordering
+  const [dragId, setDragId] = useState<string | null>(null)
+  const layout = state.layout?.length ? state.layout : DEFAULT_LAYOUT
+
   // Apply cross-filters client-side
   const rows = useMemo(
     () => applyFilters(allRows ?? [], state.filters),
     [allRows, state.filters]
   )
+
+  // Compute distinct values per groupBy dimension for label rename
+  const getDistinctValues = useCallback((groupBy: string): string[] => {
+    if (!rows.length || !groupBy || groupBy === 'day') return []
+    const vals = new Set<string>()
+    for (const r of rows) {
+      const v = String(r[groupBy] ?? '').trim()
+      if (v) vals.add(v)
+    }
+    return Array.from(vals).slice(0, 20)
+  }, [rows])
 
   const handleCrossFilter = useCallback(
     (dimension: string, value: string) => {
@@ -430,12 +450,27 @@ function AnalyticsInner() {
     kpi ? { label: 'Отклонено', value: kpiVal(kpi, 'rejected_today', 'rejected_cnt') } : null,
   ].filter((c): c is { label: string; value: number } => c !== null && c.value > 0)
 
+  // Drag handlers
+  function handleDragStart(id: string) { setDragId(id) }
+  function handleDragOver(e: React.DragEvent, overId: string) {
+    e.preventDefault()
+    if (!dragId || dragId === overId) return
+    const newLayout = [...layout]
+    const fromIdx = newLayout.indexOf(dragId)
+    const toIdx = newLayout.indexOf(overId)
+    if (fromIdx === -1 || toIdx === -1) return
+    newLayout.splice(fromIdx, 1)
+    newLayout.splice(toIdx, 0, dragId)
+    dispatch({ type: 'SET_LAYOUT', payload: newLayout })
+  }
+  function handleDragEnd() { setDragId(null) }
+
   return (
-    <div className="space-y-4 animate-fade-in">
+    <div className="space-y-4 animate-fade-in" data-theme={state.theme !== 'dark' ? state.theme : undefined}>
       {/* Top bar */}
       <div className="flex flex-wrap items-center gap-2 justify-between">
         {periodBar}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {/* Theme switcher */}
           <button
             onClick={() => {
@@ -476,22 +511,39 @@ function AnalyticsInner() {
         </div>
       )}
 
-      {/* Configurable charts */}
+      {/* Configurable charts — drag&drop reorderable */}
       <div className="space-y-4">
-        {Object.values(DEFAULT_CHART_CONFIGS).map((defaultCfg) => (
-          <ChartCard key={defaultCfg.id} chartId={defaultCfg.id} defaultTitle={defaultCfg.title}>
-            {(config: ChartConfig) => (
-              <UniversalChart config={config} rows={rows} onCrossFilter={handleCrossFilter} />
-            )}
-          </ChartCard>
-        ))}
+        {layout.map((chartId) => {
+          const defaultCfg = DEFAULT_CHART_CONFIGS[chartId]
+          if (!defaultCfg) return null
+          return (
+            <div
+              key={chartId}
+              draggable
+              onDragStart={() => handleDragStart(chartId)}
+              onDragOver={(e) => handleDragOver(e, chartId)}
+              onDragEnd={handleDragEnd}
+              className={`transition-opacity ${dragId === chartId ? 'opacity-40' : 'opacity-100'}`}
+            >
+              <ChartCard
+                chartId={chartId}
+                defaultTitle={defaultCfg.title}
+                distinctValues={getDistinctValues(state.chartConfig[chartId]?.groupBy ?? defaultCfg.groupBy)}
+              >
+                {(config: ChartConfig) => (
+                  <UniversalChart config={config} rows={rows} onCrossFilter={handleCrossFilter} />
+                )}
+              </ChartCard>
+            </div>
+          )
+        })}
       </div>
 
       {/* Pivot table */}
       <div className="rounded-lg border border-border bg-card/50 overflow-hidden">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/60 bg-secondary/30">
           <span className="text-sm font-medium">Сводная таблица</span>
-          <p className="text-[10px] text-muted-foreground/60">Двойной клик на заголовке графика — переименовать</p>
+          <p className="text-[10px] text-muted-foreground/60">Двойной клик на заголовке графика — переименовать · Перетащите карточки для изменения порядка</p>
         </div>
         <div className="p-4">
           <PivotTable rows={rows} onCrossFilter={handleCrossFilter} />

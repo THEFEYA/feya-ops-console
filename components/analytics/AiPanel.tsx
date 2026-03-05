@@ -15,18 +15,42 @@ interface Message {
   content: string
 }
 
+function topN(rows: RollupRow[], key: string, n = 3): string {
+  const sums: Record<string, number> = {}
+  for (const r of rows) {
+    const k = String(r[key] ?? '').trim()
+    if (!k) continue
+    sums[k] = (sums[k] ?? 0) + Number(r.leads_cnt ?? 0)
+  }
+  return Object.entries(sums)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, n)
+    .map(([k, v]) => `${k}(${v})`)
+    .join(', ')
+}
+
 function buildContext(rows: RollupRow[], filters: { dimension: string; value: string }[]): string {
   const total = rows.reduce((s, r) => s + Number(r.leads_cnt ?? 0), 0)
+  const totalCnt = rows.reduce((s, r) => s + Number(r.leads_cnt ?? 1), 0)
   const avgScore =
-    rows.length > 0
-      ? Math.round((rows.reduce((s, r) => s + Number(r.avg_score ?? 0), 0) / rows.length) * 10) / 10
+    totalCnt > 0
+      ? Math.round((rows.reduce((s, r) => s + Number(r.avg_score ?? 0) * Number(r.leads_cnt ?? 1), 0) / totalCnt) * 10) / 10
       : 0
   const filterDesc =
     filters.length > 0
       ? `Активные фильтры: ${filters.map((f) => `${f.dimension}=${f.value}`).join(', ')}.`
       : 'Фильтры не активны.'
 
-  return `Данные FEYA Analytics: ${total} лидов за период, средний score ${avgScore}. ${filterDesc} Строк в наборе: ${rows.length}.`
+  const parts = [
+    `FEYA Analytics: ${total} лидов, средний score ${avgScore}.`,
+    filterDesc,
+    topN(rows, 'source_slug') && `Топ-источники: ${topN(rows, 'source_slug')}.`,
+    topN(rows, 'event') && `Топ-события: ${topN(rows, 'event')}.`,
+    topN(rows, 'warmth') && `Интент: ${topN(rows, 'warmth')}.`,
+    `Строк: ${rows.length}.`,
+  ].filter(Boolean)
+
+  return parts.join(' ')
 }
 
 export function AiPanel({ rows }: Props) {

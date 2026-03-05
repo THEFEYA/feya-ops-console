@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useContext, useReducer, useEffect, useCallback, type ReactNode } from 'react'
-import { loadState, saveState } from './persist'
+import { loadState, saveState, loadStateFromSupabase, saveDefaultToSupabase } from './persist'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,6 +40,7 @@ export interface AnalyticsState {
   dateRange: DateRange
   filters: ActiveFilter[]
   chartConfig: Record<string, ChartConfig>
+  layout: string[]   // ordered chart card IDs for drag&drop
   theme: Theme
   activePreset: string | null
   labelOverrides: Record<string, string>
@@ -83,10 +84,13 @@ export const DEFAULT_CHART_CONFIGS: Record<string, ChartConfig> = {
   },
 }
 
+export const DEFAULT_LAYOUT = ['daily', 'bySource', 'byWarmth', 'byEvent']
+
 const DEFAULT_STATE: AnalyticsState = {
   dateRange: { preset: '30d' },
   filters: [],
   chartConfig: DEFAULT_CHART_CONFIGS,
+  layout: DEFAULT_LAYOUT,
   theme: 'dark',
   activePreset: null,
   labelOverrides: {},
@@ -101,9 +105,10 @@ type Action =
   | { type: 'REMOVE_FILTER'; payload: { dimension: string; value: string } }
   | { type: 'RESET_FILTERS' }
   | { type: 'UPDATE_CHART'; payload: Partial<ChartConfig> & { id: string } }
+  | { type: 'SET_LAYOUT'; payload: string[] }
   | { type: 'SET_THEME'; payload: Theme }
   | { type: 'SET_LABEL'; payload: { key: string; label: string } }
-  | { type: 'SAVE_PRESET'; payload: { name: string } }
+  | { type: 'SAVE_PRESET'; payload: { name: string; isDefault?: boolean } }
   | { type: 'LOAD_PRESET'; payload: { id: string } }
   | { type: 'SET_DEFAULT_PRESET'; payload: { id: string } }
   | { type: 'DELETE_PRESET'; payload: { id: string } }
@@ -148,6 +153,9 @@ function reducer(state: AnalyticsState, action: Action): AnalyticsState {
       }
     }
 
+    case 'SET_LAYOUT':
+      return { ...state, layout: action.payload }
+
     case 'SET_THEME':
       return { ...state, theme: action.payload }
 
@@ -160,14 +168,18 @@ function reducer(state: AnalyticsState, action: Action): AnalyticsState {
     case 'SAVE_PRESET': {
       const { presets, ...rest } = state
       const id = `preset_${Date.now()}`
-      const isDefault = presets.length === 0
+      const shouldBeDefault = action.payload.isDefault ?? presets.length === 0
       const newPreset: Preset = {
         id,
         name: action.payload.name,
-        isDefault,
+        isDefault: shouldBeDefault,
         state: rest,
       }
-      return { ...state, presets: [...presets, newPreset], activePreset: id }
+      // Mark other presets as non-default if this one is default
+      const updatedPresets = shouldBeDefault
+        ? presets.map((p) => ({ ...p, isDefault: false }))
+        : presets
+      return { ...state, presets: [...updatedPresets, newPreset], activePreset: id }
     }
 
     case 'LOAD_PRESET': {
@@ -210,18 +222,34 @@ const AnalyticsContext = createContext<AnalyticsContextValue | null>(null)
 export function AnalyticsProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, DEFAULT_STATE)
 
-  // Hydrate from localStorage on mount
+  // Hydrate: Supabase analytics_default → localStorage → built-in default
   useEffect(() => {
-    const saved = loadState()
-    if (saved) {
-      dispatch({ type: 'HYDRATE', payload: saved })
+    async function init() {
+      // 1. Apply localStorage immediately (sync)
+      const lsState = loadState()
+      if (lsState) dispatch({ type: 'HYDRATE', payload: lsState })
+
+      // 2. Try Supabase async — override if found
+      const sbState = await loadStateFromSupabase()
+      if (sbState) dispatch({ type: 'HYDRATE', payload: sbState })
     }
+    init()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Persist to localStorage on every state change
   useEffect(() => {
     saveState(state)
   }, [state])
+
+  // Sync default preset to Supabase when presets change
+  useEffect(() => {
+    const defaultPreset = state.presets.find((p) => p.isDefault)
+    if (defaultPreset) {
+      saveDefaultToSupabase(state).catch(() => {})
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.presets])
 
   const getLabel = useCallback(
     (key: string, fallback?: string) => state.labelOverrides[key] ?? fallback ?? key,
