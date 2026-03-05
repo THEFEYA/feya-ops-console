@@ -15,10 +15,10 @@ import { buildApiUrl } from '@/lib/utils'
 type TabKey = 'b2b_hot' | 'people_hot' | 'event_review' | 'extract_people'
 
 const TABS: { key: TabKey; label: string; description: string }[] = [
-  { key: 'b2b_hot', label: 'B2B горячие', description: 'mv_inbox_b2b_hot' },
-  { key: 'people_hot', label: 'Люди B2C', description: 'mv_inbox_people_hot' },
-  { key: 'event_review', label: 'Event Review', description: 'mv_inbox_event_review' },
-  { key: 'extract_people', label: 'Extract Queue', description: 'mv_inbox_extract_people' },
+  { key: 'b2b_hot', label: 'B2B горячие', description: 'inbox_b2b_hot_enriched' },
+  { key: 'people_hot', label: 'Люди B2C', description: 'inbox_people_hot_enriched' },
+  { key: 'event_review', label: 'Event Review', description: 'inbox_event_review_enriched' },
+  { key: 'extract_people', label: 'Extract Queue', description: 'inbox_extract_people_enriched' },
 ]
 
 const EMPTY_FILTERS: InboxFilters = {

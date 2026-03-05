@@ -8,6 +8,8 @@ import {
   getRecentErrors,
   getPipelineNodeStats,
   getLeadAnalytics,
+  getLeadAnalyticsRollup,
+  getKpiTodayCounts,
   getSchemaKeys,
   type InboxTab,
 } from '@/lib/api/queries'
@@ -20,12 +22,14 @@ export const revalidate = 0
 
 const ALLOWED_QUERIES = [
   'kpi_today',
+  'kpi_today_counts',
   'inbox',
   'runs_recent',
   'tasks_stats',
   'recent_errors',
   'pipeline_stats',
   'lead_analytics',
+  'lead_analytics_rollup',
   'schema_keys',
 ] as const
 
@@ -94,6 +98,18 @@ export async function GET(req: NextRequest) {
 
       case 'lead_analytics':
         data = await getLeadAnalytics()
+        break
+
+      case 'lead_analytics_rollup': {
+        const days = req.nextUrl.searchParams.get('limit')
+          ? Number(req.nextUrl.searchParams.get('limit'))
+          : 90
+        data = await getLeadAnalyticsRollup(days)
+        break
+      }
+
+      case 'kpi_today_counts':
+        data = await getKpiTodayCounts()
         break
 
       case 'schema_keys':
