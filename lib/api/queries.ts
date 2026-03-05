@@ -43,8 +43,25 @@ export async function getInbox(
   if (opts.scoreMin != null) query = query.gte('score', opts.scoreMin)
   if (opts.scoreMax != null) query = query.lte('score', opts.scoreMax)
 
-  const { data, error } = await query
-  if (error) console.error(`[getInbox:${tab}]`, error.message)
+  let { data, error } = await query
+  if (error) {
+    if (error.message.includes('created_at') && error.message.includes('does not exist')) {
+      // Some materialized views don't have created_at — retry without ordering
+      let fbQuery = sb.from(view).select('*').limit(opts.limit ?? 200)
+      if (opts.warmth) fbQuery = fbQuery.ilike('warmth', opts.warmth)
+      if (opts.source) fbQuery = fbQuery.ilike('source_slug', `%${opts.source}%`)
+      if (opts.status) fbQuery = fbQuery.eq('status', opts.status)
+      if (opts.search) fbQuery = fbQuery.or(`title.ilike.%${opts.search}%,url.ilike.%${opts.search}%`)
+      if (opts.scoreMin != null) fbQuery = fbQuery.gte('score', opts.scoreMin)
+      if (opts.scoreMax != null) fbQuery = fbQuery.lte('score', opts.scoreMax)
+      const result = await fbQuery
+      data = result.data
+      error = result.error
+      if (error) console.error(`[getInbox:${tab}:fallback]`, error.message)
+    } else {
+      console.error(`[getInbox:${tab}]`, error.message)
+    }
+  }
   return (data ?? []).map(normaliseLead)
 }
 
