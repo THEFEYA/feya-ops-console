@@ -12,6 +12,8 @@ import {
   type InboxTab,
 } from '@/lib/api/queries'
 
+// Force Node.js runtime — avoids edge environment missing process.env / Node APIs
+export const runtime = 'nodejs'
 // Always dynamic — never cache API responses
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -30,6 +32,14 @@ const ALLOWED_QUERIES = [
 type QueryName = (typeof ALLOWED_QUERIES)[number]
 
 export async function GET(req: NextRequest) {
+  // Guard: service role key must be present before touching Supabase
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return Response.json(
+      { error: 'Server misconfiguration: missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY' },
+      { status: 500 }
+    )
+  }
+
   const authorized = await authorizeRequest(req)
   if (!authorized) return unauthorizedResponse()
 
@@ -62,8 +72,8 @@ export async function GET(req: NextRequest) {
           search: req.nextUrl.searchParams.get('search') ?? undefined,
           status: req.nextUrl.searchParams.get('status') ?? undefined,
         }
-        data = await getInbox(tab, opts)
-        break
+        const { rows, _debug } = await getInbox(tab, opts)
+        return Response.json({ data: rows, _debug })
       }
 
       case 'runs_recent':

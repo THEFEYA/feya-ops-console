@@ -17,6 +17,12 @@ export async function getKpiToday() {
   return data ?? {}
 }
 
+export interface InboxDebug {
+  view: string
+  filtersApplied: string[]
+  orderUsed: string
+}
+
 export async function getInbox(
   tab: InboxTab,
   opts: {
@@ -29,23 +35,47 @@ export async function getInbox(
     search?: string
     status?: string
   } = {}
-): Promise<NormalisedLead[]> {
+): Promise<{ rows: NormalisedLead[]; _debug: InboxDebug }> {
   const sb = createAdminClient()
   const view = INBOX_VIEW_MAP[tab]
-  let query = sb.from(view).select('*').order('created_at', { ascending: false }).limit(opts.limit ?? 200)
+  const limit = opts.limit ?? 200
 
-  // Best-effort filters — only applied if column may exist
-  if (opts.warmth) query = query.ilike('warmth', opts.warmth)
-  if (opts.source) query = query.ilike('source_slug', `%${opts.source}%`)
-  // country is not in all views — filtering is done client-side in the UI
-  if (opts.status) query = query.eq('status', opts.status)
-  if (opts.search) query = query.or(`title.ilike.%${opts.search}%,url.ilike.%${opts.search}%`)
-  if (opts.scoreMin != null) query = query.gte('score', opts.scoreMin)
-  if (opts.scoreMax != null) query = query.lte('score', opts.scoreMax)
+  // Only source and search are applied server-side; warmth/status/score are done client-side
+  // to avoid zeroing out results when columns differ between views
+  const filtersApplied: string[] = []
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function withFilters(q: any) {
+    if (opts.source) { q = q.ilike('source_slug', `%${opts.source}%`); if (!filtersApplied.includes(`source:${opts.source}`)) filtersApplied.push(`source:${opts.source}`) }
+    if (opts.search) { q = q.or(`title.ilike.%${opts.search}%,url.ilike.%${opts.search}%`); if (!filtersApplied.includes(`search:${opts.search}`)) filtersApplied.push(`search:${opts.search}`) }
+    return q
+  }
 
-  const { data, error } = await query
+  // Tier 1: order by created_at
+  let orderUsed = 'created_at'
+  let { data, error } = await withFilters(
+    sb.from(view).select('*').order('created_at', { ascending: false }).limit(limit)
+  )
+
+  // Tier 2: created_at missing — try task_created_at
+  if (error?.message.includes('created_at') && error.message.includes('does not exist')) {
+    orderUsed = 'task_created_at'
+    ;({ data, error } = await withFilters(
+      sb.from(view).select('*').order('task_created_at', { ascending: false }).limit(limit)
+    ))
+  }
+
+  // Tier 3: task_created_at missing too — no ordering
+  if (error?.message.includes('task_created_at') && error.message.includes('does not exist')) {
+    orderUsed = 'none'
+    ;({ data, error } = await withFilters(sb.from(view).select('*').limit(limit)))
+  }
+
   if (error) console.error(`[getInbox:${tab}]`, error.message)
-  return (data ?? []).map(normaliseLead)
+
+  return {
+    rows: (data ?? []).map(normaliseLead),
+    _debug: { view, filtersApplied, orderUsed },
+  }
 }
 
 export async function getRunsRecent(limit = 200): Promise<NormalisedRun[]> {
@@ -103,11 +133,34 @@ export async function getPipelineNodeStats() {
 
 export async function getLeadAnalytics() {
   const sb = createAdminClient()
-  // Fetch leads with outcome info for charts
-  // Select both source_slug and source — whichever the table actually has will be non-null
-  const { data: leads } = await sb.from('leads').select('source_slug, source, warmth, country, created_at, score').limit(5000)
+  // Read directly from leads table — no dependency on 'id' column.
+  // Tier 1: extended select with lead_id as PK candidate
+  let leads: Record<string, unknown>[] = []
+  const { data: t1, error: e1 } = await sb
+    .from('leads')
+    .select('lead_id, created_at, source_slug, source, warmth, country, score, outcome, status')
+    .limit(5000)
+  if (!e1) {
+    leads = (t1 ?? []) as Record<string, unknown>[]
+  } else {
+    // Tier 2: drop optional columns; still try created_at
+    const { data: t2, error: e2 } = await sb
+      .from('leads')
+      .select('created_at, source_slug, source, warmth, country, score')
+      .limit(5000)
+    if (!e2) {
+      leads = (t2 ?? []) as Record<string, unknown>[]
+    } else {
+      // Tier 3: created_at may not exist — try inserted_at instead
+      const { data: t3 } = await sb
+        .from('leads')
+        .select('inserted_at, source_slug, source, warmth, country, score')
+        .limit(5000)
+      leads = (t3 ?? []) as Record<string, unknown>[]
+    }
+  }
   const { data: outcomes } = await sb.from('lead_outcomes').select('outcome, created_at').limit(5000)
-  return { leads: leads ?? [], outcomes: outcomes ?? [] }
+  return { leads, outcomes: outcomes ?? [] }
 }
 
 export async function getSchemaKeys() {

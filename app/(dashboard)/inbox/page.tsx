@@ -31,6 +31,12 @@ const EMPTY_FILTERS: InboxFilters = {
   scoreMax: '',
 }
 
+interface ServerDebug {
+  view: string
+  filtersApplied: string[]
+  orderUsed: string
+}
+
 interface DiagInfo {
   url: string
   // HTTP error fields
@@ -40,6 +46,7 @@ interface DiagInfo {
   // Empty-OK fields
   count?: number
   keys?: string[]
+  serverDebug?: ServerDebug
 }
 
 export default function InboxPage() {
@@ -94,19 +101,17 @@ export default function InboxPage() {
 
       const json = await res.json()
       const rows: NormalisedLead[] = json.data ?? []
+      const serverDebug: ServerDebug | undefined = json._debug
       setLeadsMap((prev) => ({ ...prev, [tab]: rows }))
-
-      if (rows.length === 0) {
-        setDiagMap((prev) => ({
-          ...prev,
-          [tab]: { url, count: 0, keys: [] },
-        }))
-      } else if (rows.length > 0) {
-        setDiagMap((prev) => ({
-          ...prev,
-          [tab]: { url, count: rows.length, keys: Object.keys(rows[0]) },
-        }))
-      }
+      setDiagMap((prev) => ({
+        ...prev,
+        [tab]: {
+          url,
+          count: rows.length,
+          keys: rows.length > 0 ? Object.keys(rows[0]) : [],
+          serverDebug,
+        },
+      }))
     } catch (e) {
       console.error(e)
     } finally {
@@ -186,27 +191,32 @@ export default function InboxPage() {
             />
           </div>
 
-          {/* Diagnostics block */}
-          {diag && (
+          {/* HTTP error — red block */}
+          {diag?.status !== undefined && (
+            <div className="mb-3 rounded-lg border border-red-500/40 bg-red-500/5 p-3 text-xs font-mono space-y-1">
+              <p className="font-semibold text-red-400">✗ Ошибка запроса</p>
+              <p className="text-muted-foreground break-all">URL: {diag.url}</p>
+              <p className="text-red-400">HTTP {diag.status} {diag.statusText}</p>
+              {diag.responseText && (
+                <pre className="text-red-300 whitespace-pre-wrap break-all max-h-40 overflow-auto">
+                  {diag.responseText}
+                </pre>
+              )}
+            </div>
+          )}
+
+          {/* Server debug — yellow block (always shown when available) */}
+          {diag?.serverDebug && (
             <div className="mb-3 rounded-lg border border-yellow-500/40 bg-yellow-500/5 p-3 text-xs font-mono space-y-1">
               <p className="font-semibold text-yellow-400">⚑ Диагностика</p>
-              <p className="text-muted-foreground break-all">URL: {diag.url}</p>
-              {diag.status !== undefined ? (
-                <>
-                  <p className="text-red-400">HTTP {diag.status} {diag.statusText}</p>
-                  {diag.responseText && (
-                    <pre className="text-red-300 whitespace-pre-wrap break-all max-h-40 overflow-auto">
-                      {diag.responseText}
-                    </pre>
-                  )}
-                </>
-              ) : (
-                <>
-                  <p className="text-muted-foreground">Записей: {diag.count}</p>
-                  {diag.keys && diag.keys.length > 0 && (
-                    <p className="text-muted-foreground">Поля: {diag.keys.join(', ')}</p>
-                  )}
-                </>
+              <p className="text-muted-foreground">Таблица: {diag.serverDebug.view}</p>
+              <p className="text-muted-foreground">Сортировка: {diag.serverDebug.orderUsed}</p>
+              <p className="text-muted-foreground">
+                Серверные фильтры: {diag.serverDebug.filtersApplied.length > 0 ? diag.serverDebug.filtersApplied.join(', ') : 'нет'}
+              </p>
+              <p className="text-muted-foreground">Записей: {diag.count}</p>
+              {diag.keys && diag.keys.length > 0 && (
+                <p className="text-muted-foreground">Поля: {diag.keys.join(', ')}</p>
               )}
             </div>
           )}

@@ -111,7 +111,45 @@ export default function AnalyticsPage() {
   }, [])
 
   if (loading) return <LoadingSpinner />
-  if (!analytics) return <EmptyState icon={BarChart3} title="Нет данных для аналитики" />
+  if (!analytics) {
+    return (
+      <div className="space-y-4">
+        {diags.length > 0 && (
+          <div className="rounded-lg border border-red-500/40 bg-red-500/5 p-3 text-xs font-mono space-y-2">
+            <p className="font-semibold text-red-400">✗ Ошибка загрузки аналитики</p>
+            {diags.map((d, i) => (
+              <div key={i} className="space-y-0.5">
+                <p className="text-muted-foreground break-all">URL: {d.url}</p>
+                {d.status !== undefined && <p className="text-red-400">HTTP {d.status} {d.statusText}</p>}
+                {d.responseText && (
+                  <pre className="text-red-300 whitespace-pre-wrap break-all max-h-40 overflow-auto">{d.responseText}</pre>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        <EmptyState icon={BarChart3} title="Нет данных для аналитики" description="Проверьте подключение к Supabase и таблицу leads" />
+      </div>
+    )
+  }
+  if (analytics.leads.length === 0) {
+    return (
+      <div className="space-y-4">
+        {diags.length > 0 && (
+          <div className="rounded-lg border border-yellow-500/40 bg-yellow-500/5 p-3 text-xs font-mono space-y-2">
+            <p className="font-semibold text-yellow-400">⚑ Диагностика</p>
+            {diags.map((d, i) => (
+              <div key={i}>
+                <p className="text-muted-foreground break-all">URL: {d.url}</p>
+                <p className="text-yellow-400">Записей: {d.count ?? 0} — {d.keys?.length === 0 ? 'таблица leads пуста' : `поля: ${d.keys?.join(', ')}`}</p>
+              </div>
+            ))}
+          </div>
+        )}
+        <EmptyState icon={BarChart3} title="Таблица leads пуста" description="Данных для отображения нет" />
+      </div>
+    )
+  }
 
   const leads = analytics.leads ?? []
   const outcomes = analytics.outcomes ?? []
