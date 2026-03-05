@@ -1,34 +1,30 @@
 'use client'
 
-// Force server-side rendering on every request — never statically cached
 export const dynamic = 'force-dynamic'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  LineChart, Line, PieChart, Pie, Cell, Legend,
+  LineChart, Line, AreaChart, Area, PieChart, Pie, Cell, ScatterChart, Scatter,
+  Legend,
 } from 'recharts'
 import { NeonCard } from '@/components/shared/NeonCard'
 import { LoadingSpinner } from '@/components/shared/LoadingSpinner'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { PivotTable } from '@/components/analytics/PivotTable'
+import { FilterChips } from '@/components/analytics/FilterChips'
+import { ChartCard } from '@/components/analytics/ChartCard'
+import { PresetBar } from '@/components/analytics/PresetBar'
+import { AiPanel } from '@/components/analytics/AiPanel'
+import { AnalyticsProvider, useAnalytics, DEFAULT_CHART_CONFIGS, type ChartConfig } from '@/lib/analytics/context'
 import { buildApiUrl } from '@/lib/utils'
-import { BarChart3, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react'
+import { BarChart3, RefreshCw, Sun, Moon, Zap } from 'lucide-react'
 
-const NEON_COLORS = ['#00e5ff', '#00ff88', '#ffcc00', '#ff3355', '#cc44ff', '#4488ff']
+const NEON_COLORS = ['#00e5ff', '#00ff88', '#ffcc00', '#ff3355', '#cc44ff', '#4488ff', '#ff9900', '#44ffcc']
 
 type RollupRow = Record<string, unknown>
 type KpiRow = Record<string, unknown>
 type Period = 'today' | '7d' | '30d' | '90d' | 'custom'
-
-interface DiagEntry {
-  url: string
-  status?: number
-  statusText?: string
-  responseText?: string
-  count?: number
-  keys?: string[]
-}
 
 const PERIOD_OPTIONS: { key: Period; label: string; days: number }[] = [
   { key: 'today', label: 'Сегодня', days: 1 },
@@ -38,7 +34,6 @@ const PERIOD_OPTIONS: { key: Period; label: string; days: number }[] = [
   { key: 'custom', label: 'Свой', days: 0 },
 ]
 
-// High-contrast tooltip style for dark background
 const tooltipStyle = {
   backgroundColor: '#0d1117',
   border: '1px solid rgba(255,255,255,0.12)',
@@ -47,47 +42,59 @@ const tooltipStyle = {
   fontSize: '12px',
 }
 const labelStyle = { color: '#f0f4f8' }
+const itemStyle = { color: '#f0f4f8' }
 
-function aggBy(rows: RollupRow[], groupKey: string, valueKey = 'leads_cnt'): { name: string; value: number }[] {
+// ─── Data helpers ─────────────────────────────────────────────────────────────
+
+function aggBy(
+  rows: RollupRow[],
+  groupKey: string,
+  valueKey = 'leads_cnt'
+): { name: string; value: number }[] {
   const sums: Record<string, number> = {}
+  const counts: Record<string, number> = {}
   for (const row of rows) {
     const k = String(row[groupKey] ?? '').trim()
     if (!k) continue
-    sums[k] = (sums[k] ?? 0) + Number(row[valueKey] ?? 0)
+    const v = Number(row[valueKey] ?? 0)
+    if (valueKey.startsWith('avg_')) {
+      const cnt = Number(row['leads_cnt'] ?? 1)
+      sums[k] = (sums[k] ?? 0) + v * cnt
+      counts[k] = (counts[k] ?? 0) + cnt
+    } else {
+      sums[k] = (sums[k] ?? 0) + v
+    }
   }
   return Object.entries(sums)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 12)
-    .map(([name, value]) => ({ name: name.slice(0, 20), value: Math.round(value * 10) / 10 }))
+    .map(([name, value]) => ({
+      name: name.slice(0, 24),
+      value: valueKey.startsWith('avg_')
+        ? Math.round((value / (counts[name] ?? 1)) * 10) / 10
+        : Math.round(value * 10) / 10,
+    }))
 }
 
-function dailySeries(rows: RollupRow[]): { name: string; leads: number; score: number }[] {
-  const byDay: Record<string, { leads: number; scoreSum: number; n: number }> = {}
+function dailySeries(rows: RollupRow[], valueKey = 'leads_cnt') {
+  const byDay: Record<string, { sum: number; cnt: number }> = {}
   for (const row of rows) {
     const day = String(row['day'] ?? '').slice(0, 10)
     if (!day) continue
-    const cnt = Number(row['leads_cnt'] ?? 0)
-    const sc = Number(row['avg_score'] ?? 0)
-    if (!byDay[day]) byDay[day] = { leads: 0, scoreSum: 0, n: 0 }
-    byDay[day].leads += cnt
-    byDay[day].scoreSum += sc * cnt
-    byDay[day].n += cnt
+    const c = Number(row['leads_cnt'] ?? 0)
+    const v = Number(row[valueKey] ?? 0)
+    if (!byDay[day]) byDay[day] = { sum: 0, cnt: 0 }
+    byDay[day].sum += valueKey.startsWith('avg_') ? v * c : v
+    byDay[day].cnt += c
   }
   return Object.entries(byDay)
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([day, v]) => ({
       name: day.slice(5),
-      leads: v.leads,
-      score: v.n > 0 ? Math.round(v.scoreSum / v.n) : 0,
+      value: valueKey.startsWith('avg_') && v.cnt > 0
+        ? Math.round(v.sum / v.cnt)
+        : v.sum,
     }))
-}
-
-function kpiVal(row: KpiRow, ...keys: string[]): number {
-  for (const k of keys) {
-    const v = Number(row[k] ?? NaN)
-    if (!isNaN(v) && v > 0) return v
-  }
-  return 0
 }
 
 function getPeriodParams(period: Period, customFrom: string, customTo: string): Record<string, string> {
@@ -102,7 +109,23 @@ function getPeriodParams(period: Period, customFrom: string, customTo: string): 
   return { limit: String(days) }
 }
 
-// Pie chart label rendered as SVG text for contrast
+function applyFilters(rows: RollupRow[], filters: { dimension: string; value: string }[]): RollupRow[] {
+  if (filters.length === 0) return rows
+  return rows.filter((row) =>
+    filters.every((f) => String(row[f.dimension] ?? '') === f.value)
+  )
+}
+
+function kpiVal(row: KpiRow, ...keys: string[]): number {
+  for (const k of keys) {
+    const v = Number(row[k] ?? NaN)
+    if (!isNaN(v) && v > 0) return v
+  }
+  return 0
+}
+
+// ─── Pie label ────────────────────────────────────────────────────────────────
+
 function PieLabel({ cx, cy, midAngle, outerRadius, percent, name }: {
   cx: number; cy: number; midAngle: number; outerRadius: number; percent: number; name: string
 }) {
@@ -113,93 +136,230 @@ function PieLabel({ cx, cy, midAngle, outerRadius, percent, name }: {
   const y = cy + r * Math.sin(-midAngle * RADIAN)
   return (
     <text x={x} y={y} fill="#e2e8f0" fontSize={10} textAnchor={x > cx ? 'start' : 'end'} dominantBaseline="central">
-      {`${name} ${(percent * 100).toFixed(0)}%`}
+      {`${name.slice(0, 12)} ${(percent * 100).toFixed(0)}%`}
     </text>
   )
 }
 
-interface SectionProps {
-  id: string
-  title: string
-  collapsed: boolean
-  onToggle: () => void
-  children: React.ReactNode
-}
-function Section({ title, collapsed, onToggle, children }: SectionProps) {
+// ─── Universal chart renderer ─────────────────────────────────────────────────
+
+function UniversalChart({
+  config,
+  rows,
+  onCrossFilter,
+}: {
+  config: ChartConfig
+  rows: RollupRow[]
+  onCrossFilter: (dimension: string, value: string) => void
+}) {
+  const isTimeSeries = config.groupBy === 'day'
+  const data = isTimeSeries ? dailySeries(rows, config.metric) : aggBy(rows, config.groupBy, config.metric)
+
+  if (data.length === 0) {
+    return <p className="text-xs text-muted-foreground py-4 text-center">Нет данных по группировке «{config.groupBy}»</p>
+  }
+
+  const handleClick = (d: unknown) => {
+    const item = d as { activePayload?: { payload?: { name?: string } }[] } | null
+    const name = item?.activePayload?.[0]?.payload?.name
+    if (name) onCrossFilter(config.groupBy, name)
+  }
+
+  const handlePieClick = (d: { name?: string }) => {
+    if (d?.name) onCrossFilter(config.groupBy, d.name)
+  }
+
+  const coloredData = data.map((d, i) => ({ ...d, fill: NEON_COLORS[i % NEON_COLORS.length] }))
+
+  if (config.type === 'pie') {
+    return (
+      <ResponsiveContainer width="100%" height={240}>
+        <PieChart>
+          <Pie
+            data={coloredData}
+            cx="50%"
+            cy="50%"
+            outerRadius={80}
+            dataKey="value"
+            labelLine={false}
+            label={PieLabel as unknown as boolean}
+            onClick={handlePieClick}
+            style={{ cursor: 'pointer' }}
+          >
+            {coloredData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
+          </Pie>
+          <Tooltip contentStyle={tooltipStyle} itemStyle={itemStyle} />
+          <Legend formatter={(v) => <span style={{ color: '#d1d5db', fontSize: 11 }}>{v}</span>} />
+        </PieChart>
+      </ResponsiveContainer>
+    )
+  }
+
+  if (config.type === 'scatter') {
+    return (
+      <ResponsiveContainer width="100%" height={220}>
+        <ScatterChart margin={{ left: 0, right: 8 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 15% 18%)" />
+          <XAxis dataKey="name" type="category" tick={{ fill: '#9ca3af', fontSize: 10 }} />
+          <YAxis dataKey="value" tick={{ fill: '#9ca3af', fontSize: 10 }} />
+          <Tooltip contentStyle={tooltipStyle} itemStyle={itemStyle} />
+          <Scatter data={data} fill="#00e5ff" onClick={(d) => { if (d?.name) onCrossFilter(config.groupBy, String(d.name)) }} style={{ cursor: 'pointer' }} />
+        </ScatterChart>
+      </ResponsiveContainer>
+    )
+  }
+
+  const commonProps = {
+    data,
+    margin: { left: 0, right: 8 },
+    onClick: handleClick,
+    style: { cursor: 'pointer' },
+  }
+
+  if (config.type === 'line') {
+    return (
+      <ResponsiveContainer width="100%" height={220}>
+        <LineChart {...commonProps}>
+          <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 15% 18%)" />
+          <XAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} />
+          <YAxis tick={{ fill: '#9ca3af', fontSize: 10 }} />
+          <Tooltip contentStyle={tooltipStyle} labelStyle={labelStyle} itemStyle={itemStyle} />
+          <Line type="monotone" dataKey="value" name={config.metric} stroke="#00e5ff" strokeWidth={2} dot={false} />
+        </LineChart>
+      </ResponsiveContainer>
+    )
+  }
+
+  if (config.type === 'area') {
+    return (
+      <ResponsiveContainer width="100%" height={220}>
+        <AreaChart {...commonProps}>
+          <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 15% 18%)" />
+          <XAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} />
+          <YAxis tick={{ fill: '#9ca3af', fontSize: 10 }} />
+          <Tooltip contentStyle={tooltipStyle} labelStyle={labelStyle} itemStyle={itemStyle} />
+          <Area type="monotone" dataKey="value" name={config.metric} stroke="#00e5ff" fill="#00e5ff22" strokeWidth={2} />
+        </AreaChart>
+      </ResponsiveContainer>
+    )
+  }
+
+  // Default: bar
+  const isVertical = !isTimeSeries && data.length > 6
   return (
-    <NeonCard>
-      <div className="flex items-center justify-between cursor-pointer select-none" onClick={onToggle}>
-        <h3 className="text-sm font-semibold">{title}</h3>
-        {collapsed
-          ? <ChevronDown className="w-4 h-4 text-muted-foreground" />
-          : <ChevronUp className="w-4 h-4 text-muted-foreground" />}
-      </div>
-      {!collapsed && <div className="mt-4">{children}</div>}
-    </NeonCard>
+    <ResponsiveContainer width="100%" height={isVertical ? Math.max(200, data.length * 28) : 220}>
+      {isVertical ? (
+        <BarChart data={data} layout="vertical" margin={{ left: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 15% 18%)" />
+          <XAxis type="number" tick={{ fill: '#9ca3af', fontSize: 10 }} />
+          <YAxis type="category" dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} width={100} />
+          <Tooltip contentStyle={tooltipStyle} labelStyle={labelStyle} itemStyle={itemStyle} />
+          <Bar dataKey="value" name={config.metric} radius={[0, 4, 4, 0]} onClick={(d) => { if (d?.name) onCrossFilter(config.groupBy, String(d.name)) }} style={{ cursor: 'pointer' }}>
+            {data.map((_, i) => <Cell key={i} fill={NEON_COLORS[i % NEON_COLORS.length]} />)}
+          </Bar>
+        </BarChart>
+      ) : (
+        <BarChart data={data} margin={{ left: 0, right: 8 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 15% 18%)" />
+          <XAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} />
+          <YAxis tick={{ fill: '#9ca3af', fontSize: 10 }} />
+          <Tooltip contentStyle={tooltipStyle} labelStyle={labelStyle} itemStyle={itemStyle} />
+          <Bar dataKey="value" name={config.metric} fill="#00e5ff" radius={[3, 3, 0, 0]} onClick={(d) => { if (d?.name) onCrossFilter(config.groupBy, String(d.name)) }} style={{ cursor: 'pointer' }}>
+            {data.map((_, i) => <Cell key={i} fill={NEON_COLORS[i % NEON_COLORS.length]} />)}
+          </Bar>
+        </BarChart>
+      )}
+    </ResponsiveContainer>
   )
 }
 
-export default function AnalyticsPage() {
-  const [rollup, setRollup] = useState<RollupRow[] | null>(null)
+// ─── Inner page (requires AnalyticsProvider) ──────────────────────────────────
+
+function AnalyticsInner() {
+  const { state, dispatch } = useAnalytics()
+  const [allRows, setAllRows] = useState<RollupRow[] | null>(null)
   const [kpi, setKpi] = useState<KpiRow | null>(null)
   const [loading, setLoading] = useState(true)
-  const [diags, setDiags] = useState<DiagEntry[]>([])
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [period, setPeriod] = useState<Period>('30d')
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
 
-  function toggleSection(id: string) {
-    setCollapsed((c) => ({ ...c, [id]: !c[id] }))
-  }
+  // Apply cross-filters client-side
+  const rows = useMemo(
+    () => applyFilters(allRows ?? [], state.filters),
+    [allRows, state.filters]
+  )
+
+  const handleCrossFilter = useCallback(
+    (dimension: string, value: string) => {
+      dispatch({ type: 'TOGGLE_FILTER', payload: { dimension, value } })
+    },
+    [dispatch]
+  )
+
+  // Sync period from context dateRange preset
+  useEffect(() => {
+    if (state.dateRange.preset !== 'custom') {
+      setPeriod(state.dateRange.preset)
+    }
+  }, [state.dateRange.preset])
 
   useEffect(() => {
     if (period === 'custom' && (!customFrom || !customTo)) return
     let cancelled = false
     async function load() {
       setLoading(true)
-      const entries: DiagEntry[] = []
+      setErrorMsg(null)
       try {
         const pParams = getPeriodParams(period, customFrom, customTo)
-        const rollupUrl = buildApiUrl('/api/sb/query', { name: 'lead_analytics_rollup', ...pParams })
+        // One shared dataset: rollup2 (falls back to rollup server-side)
+        const rollupUrl = buildApiUrl('/api/sb/query', { name: 'lead_analytics_rollup2', ...pParams })
         const kpiUrl = buildApiUrl('/api/sb/query', { name: 'kpi_today_counts' })
         const [rollupRes, kpiRes] = await Promise.all([
           fetch(rollupUrl, { cache: 'no-store' }),
           fetch(kpiUrl, { cache: 'no-store' }),
         ])
-
         if (!rollupRes.ok) {
-          const responseText = (await rollupRes.text()).slice(0, 1000)
-          entries.push({ url: rollupUrl, status: rollupRes.status, statusText: rollupRes.statusText, responseText })
-        } else {
-          const json = await rollupRes.json()
-          const rows: RollupRow[] = json.data ?? []
-          if (!cancelled) setRollup(rows)
-          entries.push({ url: rollupUrl, count: rows.length, keys: rows.length > 0 ? Object.keys(rows[0]) : [] })
+          const text = (await rollupRes.text()).slice(0, 500)
+          if (!cancelled) setErrorMsg(`HTTP ${rollupRes.status}: ${text}`)
+          return
         }
+        const json = await rollupRes.json()
+        if (!cancelled) setAllRows(json.data ?? [])
 
         if (kpiRes.ok) {
-          const json = await kpiRes.json()
-          if (!cancelled) setKpi(json.data ?? null)
+          const kpiJson = await kpiRes.json()
+          if (!cancelled) setKpi(kpiJson.data ?? null)
         }
       } catch (e) {
-        console.error(e)
+        if (!cancelled) setErrorMsg(String(e))
       } finally {
-        if (!cancelled) { setDiags(entries); setLoading(false) }
+        if (!cancelled) setLoading(false)
       }
     }
     load()
     return () => { cancelled = true }
   }, [period, customFrom, customTo])
 
-  // Period selector bar
+  // Update context dateRange when period changes
+  function handlePeriodChange(p: Period) {
+    setPeriod(p)
+    if (p !== 'custom') {
+      dispatch({ type: 'SET_DATE_RANGE', payload: { preset: p } })
+    }
+  }
+
+  const themeIcons = { dark: Moon, light: Sun, neon: Zap }
+  const ThemeIcon = themeIcons[state.theme]
+
   const periodBar = (
     <div className="flex flex-wrap items-center gap-2">
       <div className="flex rounded-lg border border-border overflow-hidden text-xs">
         {PERIOD_OPTIONS.map((opt) => (
           <button
             key={opt.key}
-            onClick={() => setPeriod(opt.key)}
+            onClick={() => handlePeriodChange(opt.key)}
             className={`px-3 py-1.5 transition-colors ${
               period === opt.key
                 ? 'bg-neon-cyan/20 text-neon-cyan font-medium'
@@ -231,35 +391,29 @@ export default function AnalyticsPage() {
     </div>
   )
 
-  if (loading && rollup === null) return (
+  if (loading && allRows === null) return (
     <div className="space-y-4">
       {periodBar}
       <LoadingSpinner />
     </div>
   )
 
-  if (rollup === null) {
+  if (errorMsg || allRows === null) {
     return (
       <div className="space-y-4">
         {periodBar}
-        {diags.length > 0 && (
-          <div className="rounded-lg border border-red-500/40 bg-red-500/5 p-3 text-xs font-mono space-y-2">
-            <p className="font-semibold text-red-400">✗ Ошибка загрузки аналитики</p>
-            {diags.map((d, i) => (
-              <div key={i} className="space-y-0.5">
-                <p className="text-muted-foreground break-all">URL: {d.url}</p>
-                {d.status !== undefined && <p className="text-red-400">HTTP {d.status} {d.statusText}</p>}
-                {d.responseText && <pre className="text-red-300 whitespace-pre-wrap break-all max-h-40 overflow-auto">{d.responseText}</pre>}
-              </div>
-            ))}
+        {errorMsg && (
+          <div className="rounded-lg border border-red-500/40 bg-red-500/5 p-3 text-xs font-mono">
+            <p className="font-semibold text-red-400 mb-1">Ошибка загрузки аналитики</p>
+            <p className="text-red-300 whitespace-pre-wrap break-all">{errorMsg}</p>
           </div>
         )}
-        <EmptyState icon={BarChart3} title="Нет данных" description="Проверьте витрину lead_analytics_rollup" />
+        <EmptyState icon={BarChart3} title="Нет данных" description="Проверьте витрину lead_analytics_rollup2 / lead_analytics_rollup" />
       </div>
     )
   }
 
-  if (rollup.length === 0) {
+  if (allRows.length === 0) {
     return (
       <div className="space-y-4">
         {periodBar}
@@ -268,11 +422,7 @@ export default function AnalyticsPage() {
     )
   }
 
-  const daily = dailySeries(rollup)
-  const sourceData = aggBy(rollup, 'source_slug')
-  const warmthData = aggBy(rollup, 'warmth').map((d, i) => ({ ...d, fill: NEON_COLORS[i] ?? '#888' }))
-  const totalLeads = rollup.reduce((s, r) => s + Number(r['leads_cnt'] ?? 0), 0)
-
+  const totalLeads = rows.reduce((s, r) => s + Number(r['leads_cnt'] ?? 0), 0)
   const kpiCards = [
     { label: 'Лиды (период)', value: totalLeads },
     kpi ? { label: 'Лиды сегодня', value: kpiVal(kpi, 'leads_today', 'leads_cnt_today') } : null,
@@ -282,22 +432,36 @@ export default function AnalyticsPage() {
 
   return (
     <div className="space-y-4 animate-fade-in">
-      {/* Period selector */}
-      {periodBar}
+      {/* Top bar */}
+      <div className="flex flex-wrap items-center gap-2 justify-between">
+        {periodBar}
+        <div className="flex items-center gap-2">
+          {/* Theme switcher */}
+          <button
+            onClick={() => {
+              const themes = ['dark', 'light', 'neon'] as const
+              const next = themes[(themes.indexOf(state.theme) + 1) % themes.length]
+              dispatch({ type: 'SET_THEME', payload: next })
+            }}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-border text-xs text-muted-foreground hover:text-foreground hover:border-border/80 transition-colors"
+            title={`Тема: ${state.theme}`}
+          >
+            <ThemeIcon size={13} />
+            {state.theme}
+          </button>
+          <PresetBar />
+          <AiPanel rows={rows} />
+        </div>
+      </div>
 
-      {/* Diagnostics (collapsed by default once data arrives) */}
-      {diags.length > 0 && (
-        <Section id="diag" title="⚑ Диагностика" collapsed={!!collapsed['diag']} onToggle={() => toggleSection('diag')}>
-          {diags.map((d, i) => (
-            <div key={i} className="text-xs font-mono space-y-0.5">
-              <p className="text-muted-foreground break-all">URL: {d.url}</p>
-              {d.status !== undefined
-                ? <p className="text-red-400">HTTP {d.status} {d.statusText}</p>
-                : <p className="text-muted-foreground">Записей: {d.count}{d.keys?.length ? ` · поля: ${d.keys.join(', ')}` : ''}</p>
-              }
-            </div>
-          ))}
-        </Section>
+      {/* Active filters */}
+      <FilterChips />
+
+      {/* Cross-filter notice */}
+      {state.filters.length > 0 && (
+        <p className="text-[10px] text-muted-foreground/60">
+          Показано {rows.length} из {allRows.length} строк · Кликните на элемент графика для добавления фильтра
+        </p>
       )}
 
       {/* KPI strip */}
@@ -312,88 +476,37 @@ export default function AnalyticsPage() {
         </div>
       )}
 
-      {/* Leads per day */}
-      <Section id="daily" title="Лиды по дням" collapsed={!!collapsed['daily']} onToggle={() => toggleSection('daily')}>
-        {daily.length === 0
-          ? <p className="text-xs text-muted-foreground">Нет данных с полем «day» в витрине</p>
-          : (
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={daily} margin={{ left: 0, right: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 15% 18%)" />
-                <XAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} />
-                <YAxis tick={{ fill: '#9ca3af', fontSize: 10 }} />
-                <Tooltip contentStyle={tooltipStyle} labelStyle={labelStyle} itemStyle={{ color: '#f0f4f8' }} />
-                <Bar dataKey="leads" name="Лиды" fill="#00e5ff" radius={[3, 3, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-      </Section>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* By source */}
-        <Section id="source" title="Лиды по источнику" collapsed={!!collapsed['source']} onToggle={() => toggleSection('source')}>
-          {sourceData.length === 0
-            ? <EmptyState title="Нет данных" description="source_slug отсутствует в витрине" />
-            : (
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={sourceData} layout="vertical" margin={{ left: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 15% 18%)" />
-                  <XAxis type="number" tick={{ fill: '#9ca3af', fontSize: 10 }} />
-                  <YAxis type="category" dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} width={90} />
-                  <Tooltip contentStyle={tooltipStyle} labelStyle={labelStyle} itemStyle={{ color: '#f0f4f8' }} />
-                  <Bar dataKey="value" name="Лиды" fill="#00e5ff" radius={[0, 4, 4, 0]}>
-                    {sourceData.map((_, i) => <Cell key={i} fill={NEON_COLORS[i % NEON_COLORS.length]} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+      {/* Configurable charts */}
+      <div className="space-y-4">
+        {Object.values(DEFAULT_CHART_CONFIGS).map((defaultCfg) => (
+          <ChartCard key={defaultCfg.id} chartId={defaultCfg.id} defaultTitle={defaultCfg.title}>
+            {(config: ChartConfig) => (
+              <UniversalChart config={config} rows={rows} onCrossFilter={handleCrossFilter} />
             )}
-        </Section>
-
-        {/* By warmth */}
-        <Section id="warmth" title="По интенту (warmth)" collapsed={!!collapsed['warmth']} onToggle={() => toggleSection('warmth')}>
-          {warmthData.length === 0
-            ? <EmptyState title="Нет данных" description="warmth отсутствует в витрине" />
-            : (
-              <ResponsiveContainer width="100%" height={220}>
-                <PieChart>
-                  <Pie
-                    data={warmthData}
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={72}
-                    dataKey="value"
-                    labelLine={false}
-                    label={PieLabel as unknown as boolean}
-                  >
-                    {warmthData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
-                  </Pie>
-                  <Tooltip contentStyle={tooltipStyle} itemStyle={{ color: '#f0f4f8' }} />
-                  <Legend formatter={(v) => <span style={{ color: '#d1d5db', fontSize: 11 }}>{v}</span>} />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
-        </Section>
+          </ChartCard>
+        ))}
       </div>
 
-      {/* Score trend */}
-      {daily.some((d) => d.score > 0) && (
-        <Section id="score" title="Средний скоринг по дням" collapsed={!!collapsed['score']} onToggle={() => toggleSection('score')}>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={daily} margin={{ left: 0, right: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 15% 18%)" />
-              <XAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} />
-              <YAxis domain={[0, 100]} tick={{ fill: '#9ca3af', fontSize: 10 }} />
-              <Tooltip contentStyle={tooltipStyle} labelStyle={labelStyle} itemStyle={{ color: '#f0f4f8' }} />
-              <Line type="monotone" dataKey="score" name="Avg Score" stroke="#00ff88" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </Section>
-      )}
-
       {/* Pivot table */}
-      <Section id="pivot" title="Сводная таблица" collapsed={!!collapsed['pivot']} onToggle={() => toggleSection('pivot')}>
-        <PivotTable rows={rollup} />
-      </Section>
+      <div className="rounded-lg border border-border bg-card/50 overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/60 bg-secondary/30">
+          <span className="text-sm font-medium">Сводная таблица</span>
+          <p className="text-[10px] text-muted-foreground/60">Двойной клик на заголовке графика — переименовать</p>
+        </div>
+        <div className="p-4">
+          <PivotTable rows={rows} onCrossFilter={handleCrossFilter} />
+        </div>
+      </div>
     </div>
+  )
+}
+
+// ─── Page wrapper with context ────────────────────────────────────────────────
+
+export default function AnalyticsPage() {
+  return (
+    <AnalyticsProvider>
+      <AnalyticsInner />
+    </AnalyticsProvider>
   )
 }

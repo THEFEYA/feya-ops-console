@@ -211,6 +211,33 @@ export async function getLeadAnalytics() {
   return { leads, outcomes: outcomes ?? [] }
 }
 
+export async function getLeadAnalyticsRollup2(days = 90, dateFrom?: string, dateTo?: string) {
+  const sb = createAdminClient()
+  const cutoff = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
+
+  // Try rollup2 first (has lead_kind column), fall back to rollup
+  const buildQuery = (table: string) => {
+    const q = dateFrom && dateTo
+      ? sb.from(table).select('*').gte('day', dateFrom).lte('day', dateTo).order('day', { ascending: false }).limit(5000)
+      : sb.from(table).select('*').gte('day', cutoff).order('day', { ascending: false }).limit(5000)
+    return q
+  }
+
+  let { data, error } = await buildQuery('lead_analytics_rollup2')
+  if (error) {
+    // fallback to rollup
+    ;({ data, error } = await buildQuery('lead_analytics_rollup'))
+    if (error?.message.includes('day') && error.message.includes('does not exist')) {
+      ;({ data, error } = await sb.from('lead_analytics_rollup').select('*').limit(5000))
+    }
+    if (error?.message.includes('lead_analytics_rollup')) {
+      ;({ data, error } = await sb.from('lead_analytics_rollup2').select('*').limit(5000))
+    }
+  }
+  if (error) console.error('[getLeadAnalyticsRollup2]', error.message)
+  return data ?? []
+}
+
 export async function getSchemaKeys() {
   const sb = createAdminClient()
   const sources: Record<string, string[]> = {}

@@ -23,9 +23,10 @@ const METRICS = [
 
 interface Props {
   rows: RollupRow[]
+  onCrossFilter?: (dimension: string, value: string) => void
 }
 
-export function PivotTable({ rows }: Props) {
+export function PivotTable({ rows, onCrossFilter }: Props) {
   const [dimension, setDimension] = useState('source_slug')
   const [activeMetrics, setActiveMetrics] = useState<string[]>(['leads_cnt', 'avg_score'])
   const [sortCol, setSortCol] = useState('leads_cnt')
@@ -177,7 +178,11 @@ export function PivotTable({ rows }: Props) {
             <tbody>
               {tableRows.map((row) => (
                 <tr key={String(row._dim)} className="hover:bg-secondary/30 transition-colors">
-                  <td className="px-3 py-1.5 text-foreground font-medium border-b border-border/40">
+                  <td
+                    className={`px-3 py-1.5 text-foreground font-medium border-b border-border/40 ${onCrossFilter ? 'cursor-pointer hover:text-neon-cyan' : ''}`}
+                    onClick={() => onCrossFilter?.(dimension, String(row._dim))}
+                    title={onCrossFilter ? 'Клик — добавить фильтр' : undefined}
+                  >
                     {String(row._dim)}
                   </td>
                   {cols.map((col) => (

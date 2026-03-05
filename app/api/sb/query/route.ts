@@ -9,6 +9,7 @@ import {
   getPipelineNodeStats,
   getLeadAnalytics,
   getLeadAnalyticsRollup,
+  getLeadAnalyticsRollup2,
   getKpiTodayCounts,
   getLeadExplainRu,
   getUiTermsRu,
@@ -32,6 +33,7 @@ const ALLOWED_QUERIES = [
   'pipeline_stats',
   'lead_analytics',
   'lead_analytics_rollup',
+  'lead_analytics_rollup2',
   'lead_explain_ru',
   'ui_terms_ru',
   'schema_keys',
@@ -111,6 +113,16 @@ export async function GET(req: NextRequest) {
         const dateFrom = req.nextUrl.searchParams.get('date_from') ?? undefined
         const dateTo = req.nextUrl.searchParams.get('date_to') ?? undefined
         data = await getLeadAnalyticsRollup(days, dateFrom, dateTo)
+        break
+      }
+
+      case 'lead_analytics_rollup2': {
+        const days2 = req.nextUrl.searchParams.get('limit')
+          ? Number(req.nextUrl.searchParams.get('limit'))
+          : 90
+        const dateFrom2 = req.nextUrl.searchParams.get('date_from') ?? undefined
+        const dateTo2 = req.nextUrl.searchParams.get('date_to') ?? undefined
+        data = await getLeadAnalyticsRollup2(days2, dateFrom2, dateTo2)
         break
       }
 
