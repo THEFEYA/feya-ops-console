@@ -16,10 +16,12 @@ import { FilterChips } from '@/components/analytics/FilterChips'
 import { ChartCard } from '@/components/analytics/ChartCard'
 import { PresetBar } from '@/components/analytics/PresetBar'
 import { AiPanel } from '@/components/analytics/AiPanel'
-import { AnalyticsProvider, useAnalytics, DEFAULT_CHART_CONFIGS, DEFAULT_LAYOUT, type ChartConfig } from '@/lib/analytics/context'
+import { AnalyticsProvider, useAnalytics, ALL_KNOWN_CHART_DEFAULTS, REQUIRED_LAYOUT, type ChartConfig } from '@/lib/analytics/context'
 import { AnalyticsErrorBoundary } from '@/components/analytics/ErrorBoundary'
 import { buildApiUrl } from '@/lib/utils'
-import { BarChart3, RefreshCw, Sun, Moon, Zap } from 'lucide-react'
+import { BarChart3, RefreshCw, Sun, Moon, Zap, RotateCcw } from 'lucide-react'
+
+const LS_KEY = 'feya_analytics_state'
 
 const NEON_COLORS = ['#00e5ff', '#00ff88', '#ffcc00', '#ff3355', '#cc44ff', '#4488ff', '#ff9900', '#44ffcc']
 
@@ -293,7 +295,9 @@ function AnalyticsInner() {
 
   // Drag & drop state for chart card reordering
   const [dragId, setDragId] = useState<string | null>(null)
-  const layout = state.layout?.length ? state.layout : DEFAULT_LAYOUT
+  // Safe layout: always falls back to REQUIRED_LAYOUT, filters to known chart IDs only
+  const layout = (state.layout?.length ? state.layout : REQUIRED_LAYOUT)
+    .filter((id) => !['kpis', 'pivot'].includes(id))
 
   // Apply cross-filters client-side
   const rows = useMemo(
@@ -491,6 +495,23 @@ function AnalyticsInner() {
           </button>
           <PresetBar />
           <AiPanel rows={rows} />
+          {/* Reset button */}
+          <button
+            onClick={() => {
+              try { localStorage.removeItem(LS_KEY) } catch { /* ignore */ }
+              dispatch({ type: 'RESET_STATE' })
+              fetch('/api/actions/ui-prefs', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key: 'analytics_default', value: null }),
+              }).catch(() => {})
+            }}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-border text-xs text-muted-foreground hover:text-red-400 hover:border-red-500/40 transition-colors"
+            title="Сбросить настройки аналитики"
+          >
+            <RotateCcw size={13} />
+            Сброс
+          </button>
         </div>
       </div>
 
@@ -516,10 +537,16 @@ function AnalyticsInner() {
         </div>
       )}
 
+      {/* Debug: layout diagnostic */}
+      <p className="text-[10px] text-muted-foreground/40 font-mono">
+        layout: {layout.length} · cards rendered: {layout.filter((id) => !!(state.chartConfig[id] ?? ALL_KNOWN_CHART_DEFAULTS[id])).length}
+      </p>
+
       {/* Configurable charts — drag&drop reorderable */}
       <div className="space-y-4">
         {layout.map((chartId) => {
-          const defaultCfg = DEFAULT_CHART_CONFIGS[chartId]
+          // Use live chartConfig first, fall back to any known default (covers legacy IDs)
+          const defaultCfg = state.chartConfig[chartId] ?? ALL_KNOWN_CHART_DEFAULTS[chartId]
           if (!defaultCfg) return null
           return (
             <div
@@ -533,7 +560,7 @@ function AnalyticsInner() {
               <ChartCard
                 chartId={chartId}
                 defaultTitle={defaultCfg.title}
-                distinctValues={getDistinctValues(state.chartConfig[chartId]?.groupBy ?? defaultCfg.groupBy)}
+                distinctValues={getDistinctValues((state.chartConfig[chartId] ?? defaultCfg).groupBy)}
               >
                 {(config: ChartConfig) => (
                   <UniversalChart config={config} rows={rows} onCrossFilter={handleCrossFilter} />

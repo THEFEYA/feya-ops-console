@@ -121,12 +121,15 @@ const LEGACY_CHART_DEFAULTS: Record<string, ChartConfig> = {
 }
 
 // Combined lookup: all known chart IDs (new + legacy)
-const ALL_KNOWN_CHART_DEFAULTS: Record<string, ChartConfig> = {
+export const ALL_KNOWN_CHART_DEFAULTS: Record<string, ChartConfig> = {
   ...DEFAULT_CHART_CONFIGS,
   ...LEGACY_CHART_DEFAULTS,
 }
 
 export const DEFAULT_LAYOUT = ['daily', 'bySource', 'byWarmth', 'byEvent']
+
+// Required layout IDs — must always be present (includes legacy V3 chart IDs)
+export const REQUIRED_LAYOUT = ['leads_per_day', 'by_source', 'by_warmth', 'avg_score_trend']
 
 export const DEFAULT_STATE: AnalyticsState = {
   dateRange: { preset: '30d' },
@@ -222,8 +225,18 @@ export function normalizeState(raw: unknown): Partial<AnalyticsState> {
 
   // layout — must be string[], parsed before chartConfig so we can fill gaps
   let layout: string[] | undefined
-  if (Array.isArray(r.layout) && r.layout.every((v) => typeof v === 'string') && r.layout.length > 0) {
-    layout = r.layout as string[]
+  {
+    const raw = Array.isArray(r.layout) ? (r.layout as unknown[]).filter((v): v is string => typeof v === 'string' && v.length > 0) : []
+    if (raw.length < 2) {
+      // Too short or corrupt — replace with required layout
+      layout = [...REQUIRED_LAYOUT]
+    } else {
+      // Ensure every required chart ID is present
+      layout = [...raw]
+      for (const id of REQUIRED_LAYOUT) {
+        if (!layout.includes(id)) layout.push(id)
+      }
+    }
     result.layout = layout
   }
 
