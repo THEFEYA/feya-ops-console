@@ -133,20 +133,31 @@ export async function getPipelineNodeStats() {
 
 export async function getLeadAnalytics() {
   const sb = createAdminClient()
-  // Read directly from leads table; try extended columns first, fallback to minimal set
+  // Read directly from leads table — no dependency on 'id' column.
+  // Tier 1: extended select with lead_id as PK candidate
   let leads: Record<string, unknown>[] = []
-  const { data: leadsData, error: leadsError } = await sb
+  const { data: t1, error: e1 } = await sb
     .from('leads')
     .select('lead_id, created_at, source_slug, source, warmth, country, score, outcome, status')
     .limit(5000)
-  if (leadsError) {
-    const { data: fallback } = await sb
+  if (!e1) {
+    leads = (t1 ?? []) as Record<string, unknown>[]
+  } else {
+    // Tier 2: drop optional columns; still try created_at
+    const { data: t2, error: e2 } = await sb
       .from('leads')
       .select('created_at, source_slug, source, warmth, country, score')
       .limit(5000)
-    leads = (fallback ?? []) as Record<string, unknown>[]
-  } else {
-    leads = (leadsData ?? []) as Record<string, unknown>[]
+    if (!e2) {
+      leads = (t2 ?? []) as Record<string, unknown>[]
+    } else {
+      // Tier 3: created_at may not exist — try inserted_at instead
+      const { data: t3 } = await sb
+        .from('leads')
+        .select('inserted_at, source_slug, source, warmth, country, score')
+        .limit(5000)
+      leads = (t3 ?? []) as Record<string, unknown>[]
+    }
   }
   const { data: outcomes } = await sb.from('lead_outcomes').select('outcome, created_at').limit(5000)
   return { leads, outcomes: outcomes ?? [] }
