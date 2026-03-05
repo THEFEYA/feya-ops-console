@@ -10,42 +10,67 @@ const INBOX_VIEW_MAP: Record<InboxTab, string> = {
   extract_people: 'mv_inbox_extract_people',
 }
 
+/** Throw a rich error that carries Supabase details so callers get full context. */
+function sbError(context: string, err: { message: string; details?: string | null; hint?: string | null }) {
+  const parts = [err.message, err.details, err.hint].filter(Boolean).join(' | ')
+  const e = new Error(`[${context}] ${parts}`) as Error & { sbDetails?: string; sbHint?: string }
+  e.sbDetails = err.details ?? undefined
+  e.sbHint = err.hint ?? undefined
+  return e
+}
+
 export async function getKpiToday() {
   const sb = createAdminClient()
   const { data, error } = await sb.from('v_kpi_today').select('*').limit(1).maybeSingle()
-  if (error) console.error('[getKpiToday]', error.message)
+  if (error) throw sbError('getKpiToday', error)
   return data ?? {}
 }
 
-export async function getInbox(
-  tab: InboxTab,
-  opts: {
-    limit?: number
-    scoreMin?: number
-    scoreMax?: number
-    warmth?: string
-    source?: string
-    country?: string
-    search?: string
-    status?: string
-  } = {}
-): Promise<NormalisedLead[]> {
+export interface InboxOpts {
+  limit?: number
+  scoreMin?: number
+  scoreMax?: number
+  warmth?: string
+  source?: string
+  country?: string
+  search?: string
+  status?: string
+}
+
+export interface InboxResult {
+  rows: NormalisedLead[]
+  debug: {
+    resolvedTable: string
+    appliedFilters: Record<string, unknown>
+    limit: number
+  }
+}
+
+export async function getInbox(tab: InboxTab, opts: InboxOpts = {}): Promise<InboxResult> {
   const sb = createAdminClient()
   const view = INBOX_VIEW_MAP[tab]
-  let query = sb.from(view).select('*').order('created_at', { ascending: false }).limit(opts.limit ?? 200)
+  const limit = opts.limit ?? 200
+
+  let query = sb.from(view).select('*').order('created_at', { ascending: false }).limit(limit)
+
+  const appliedFilters: Record<string, unknown> = {}
 
   // Best-effort filters — only applied if column may exist
-  if (opts.warmth) query = query.ilike('warmth', opts.warmth)
-  if (opts.source) query = query.ilike('source_slug', `%${opts.source}%`)
+  if (opts.warmth) { query = query.ilike('warmth', opts.warmth); appliedFilters.warmth = opts.warmth }
+  if (opts.source) { query = query.ilike('source_slug', `%${opts.source}%`); appliedFilters.source_slug = opts.source }
   // country is not in all views — filtering is done client-side in the UI
-  if (opts.status) query = query.eq('status', opts.status)
-  if (opts.search) query = query.or(`title.ilike.%${opts.search}%,url.ilike.%${opts.search}%`)
-  if (opts.scoreMin != null) query = query.gte('score', opts.scoreMin)
-  if (opts.scoreMax != null) query = query.lte('score', opts.scoreMax)
+  if (opts.status) { query = query.eq('status', opts.status); appliedFilters.status = opts.status }
+  if (opts.search) { query = query.or(`title.ilike.%${opts.search}%,url.ilike.%${opts.search}%`); appliedFilters.search = opts.search }
+  if (opts.scoreMin != null) { query = query.gte('score', opts.scoreMin); appliedFilters.scoreMin = opts.scoreMin }
+  if (opts.scoreMax != null) { query = query.lte('score', opts.scoreMax); appliedFilters.scoreMax = opts.scoreMax }
 
   const { data, error } = await query
-  if (error) console.error(`[getInbox:${tab}]`, error.message)
-  return (data ?? []).map(normaliseLead)
+  if (error) throw sbError(`getInbox:${tab}`, error)
+
+  return {
+    rows: (data ?? []).map(normaliseLead),
+    debug: { resolvedTable: view, appliedFilters, limit },
+  }
 }
 
 export async function getRunsRecent(limit = 200): Promise<NormalisedRun[]> {
@@ -55,14 +80,14 @@ export async function getRunsRecent(limit = 200): Promise<NormalisedRun[]> {
     .select('*')
     .order('created_at', { ascending: false })
     .limit(limit)
-  if (error) console.error('[getRunsRecent]', error.message)
+  if (error) throw sbError('getRunsRecent', error)
   return (data ?? []).map(normaliseRun)
 }
 
 export async function getTasksStats() {
   const sb = createAdminClient()
   const { data, error } = await sb.from('tasks').select('status').limit(2000)
-  if (error) console.error('[getTasksStats]', error.message)
+  if (error) throw sbError('getTasksStats', error)
   const rows = data ?? []
   const counts: Record<string, number> = {}
   for (const r of rows) {
@@ -74,7 +99,6 @@ export async function getTasksStats() {
 
 export async function getRecentErrors(limit = 50) {
   const sb = createAdminClient()
-  // Try tasks first, then runs
   const { data: taskErrors } = await sb
     .from('tasks')
     .select('*')
@@ -92,21 +116,29 @@ export async function getRecentErrors(limit = 50) {
 
 export async function getPipelineNodeStats() {
   const sb = createAdminClient()
-  // Aggregate tasks by pipeline stage/node
   const { data, error } = await sb
     .from('tasks')
     .select('status, node, created_at')
     .limit(5000)
-  if (error) console.error('[getPipelineNodeStats]', error.message)
+  if (error) throw sbError('getPipelineNodeStats', error)
   return data ?? []
 }
 
 export async function getLeadAnalytics() {
   const sb = createAdminClient()
-  // Fetch leads with outcome info for charts
   // Select both source_slug and source — whichever the table actually has will be non-null
-  const { data: leads } = await sb.from('leads').select('source_slug, source, warmth, country, created_at, score').limit(5000)
-  const { data: outcomes } = await sb.from('lead_outcomes').select('outcome, created_at').limit(5000)
+  const { data: leads, error: leadsErr } = await sb
+    .from('leads')
+    .select('source_slug, source, warmth, country, created_at, score')
+    .limit(5000)
+  if (leadsErr) throw sbError('getLeadAnalytics:leads', leadsErr)
+
+  const { data: outcomes, error: outcomesErr } = await sb
+    .from('lead_outcomes')
+    .select('outcome, created_at')
+    .limit(5000)
+  if (outcomesErr) throw sbError('getLeadAnalytics:outcomes', outcomesErr)
+
   return { leads: leads ?? [], outcomes: outcomes ?? [] }
 }
 
