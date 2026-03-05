@@ -84,6 +84,48 @@ export const DEFAULT_CHART_CONFIGS: Record<string, ChartConfig> = {
   },
 }
 
+// Legacy V3 chart IDs → default configs (migration from old chartTypes format)
+const LEGACY_CHART_DEFAULTS: Record<string, ChartConfig> = {
+  leads_per_day: {
+    id: 'leads_per_day',
+    title: 'Лиды по дням',
+    type: 'bar',
+    metric: 'leads_cnt',
+    groupBy: 'day',
+    collapsed: false,
+  },
+  by_source: {
+    id: 'by_source',
+    title: 'По источнику',
+    type: 'bar',
+    metric: 'leads_cnt',
+    groupBy: 'source_slug',
+    collapsed: false,
+  },
+  by_warmth: {
+    id: 'by_warmth',
+    title: 'По интенту',
+    type: 'pie',
+    metric: 'leads_cnt',
+    groupBy: 'warmth',
+    collapsed: false,
+  },
+  avg_score_trend: {
+    id: 'avg_score_trend',
+    title: 'Средний скор',
+    type: 'line',
+    metric: 'avg_score',
+    groupBy: 'day',
+    collapsed: false,
+  },
+}
+
+// Combined lookup: all known chart IDs (new + legacy)
+const ALL_KNOWN_CHART_DEFAULTS: Record<string, ChartConfig> = {
+  ...DEFAULT_CHART_CONFIGS,
+  ...LEGACY_CHART_DEFAULTS,
+}
+
 export const DEFAULT_LAYOUT = ['daily', 'bySource', 'byWarmth', 'byEvent']
 
 export const DEFAULT_STATE: AnalyticsState = {
@@ -125,19 +167,33 @@ function safePresets(raw: unknown): Preset[] {
   )
 }
 
-function safeChartConfig(raw: unknown): Record<string, ChartConfig> {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return DEFAULT_CHART_CONFIGS
+// Non-chart layout slot IDs (kpis strip, pivot table) — never need a chartConfig entry
+const NON_CHART_LAYOUT_IDS = new Set(['kpis', 'pivot'])
+
+function safeChartConfig(raw: unknown, layout?: string[]): Record<string, ChartConfig> {
   const result: Record<string, ChartConfig> = { ...DEFAULT_CHART_CONFIGS }
-  for (const [id, cfg] of Object.entries(raw as Record<string, unknown>)) {
-    if (!cfg || typeof cfg !== 'object') continue
-    const c = cfg as Partial<ChartConfig>
-    result[id] = {
-      id: typeof c.id === 'string' ? c.id : id,
-      title: typeof c.title === 'string' ? c.title : (DEFAULT_CHART_CONFIGS[id]?.title ?? id),
-      type: VALID_CHART_TYPES.includes(c.type as ChartType) ? (c.type as ChartType) : 'bar',
-      metric: typeof c.metric === 'string' ? c.metric : 'leads_cnt',
-      groupBy: typeof c.groupBy === 'string' ? c.groupBy : 'day',
-      collapsed: typeof c.collapsed === 'boolean' ? c.collapsed : false,
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const [id, cfg] of Object.entries(raw as Record<string, unknown>)) {
+      if (!cfg || typeof cfg !== 'object') continue
+      const c = cfg as Partial<ChartConfig>
+      const knownDefault = ALL_KNOWN_CHART_DEFAULTS[id]
+      result[id] = {
+        id: typeof c.id === 'string' ? c.id : id,
+        title: typeof c.title === 'string' ? c.title : (knownDefault?.title ?? id),
+        type: VALID_CHART_TYPES.includes(c.type as ChartType) ? (c.type as ChartType) : (knownDefault?.type ?? 'bar'),
+        metric: typeof c.metric === 'string' ? c.metric : (knownDefault?.metric ?? 'leads_cnt'),
+        groupBy: typeof c.groupBy === 'string' ? c.groupBy : (knownDefault?.groupBy ?? 'day'),
+        collapsed: typeof c.collapsed === 'boolean' ? c.collapsed : false,
+      }
+    }
+  }
+  // Ensure every chart ID in layout has a config entry
+  if (layout) {
+    for (const id of layout) {
+      if (NON_CHART_LAYOUT_IDS.has(id)) continue
+      if (!result[id] && ALL_KNOWN_CHART_DEFAULTS[id]) {
+        result[id] = { ...ALL_KNOWN_CHART_DEFAULTS[id] }
+      }
     }
   }
   return result
@@ -164,14 +220,41 @@ export function normalizeState(raw: unknown): Partial<AnalyticsState> {
   // filters
   result.filters = safeFilters(r.filters)
 
-  // chartConfig
-  if (r.chartConfig) {
-    result.chartConfig = safeChartConfig(r.chartConfig)
+  // layout — must be string[], parsed before chartConfig so we can fill gaps
+  let layout: string[] | undefined
+  if (Array.isArray(r.layout) && r.layout.every((v) => typeof v === 'string') && r.layout.length > 0) {
+    layout = r.layout as string[]
+    result.layout = layout
   }
 
-  // layout — must be string[]
-  if (Array.isArray(r.layout) && r.layout.every((v) => typeof v === 'string') && r.layout.length > 0) {
-    result.layout = r.layout as string[]
+  // chartConfig — migrate from legacy chartTypes if needed
+  if (r.chartConfig && typeof r.chartConfig === 'object' && !Array.isArray(r.chartConfig)) {
+    result.chartConfig = safeChartConfig(r.chartConfig, layout)
+  } else if (r.chartTypes && typeof r.chartTypes === 'object' && !Array.isArray(r.chartTypes)) {
+    // V3 → V4 migration: chartTypes was Record<string, ChartType>
+    const ct = r.chartTypes as Record<string, unknown>
+    const migrated: Record<string, ChartConfig> = {}
+    const legacyTypeMap: Record<string, { metric: string; groupBy: string; title: string; defaultType: ChartType }> = {
+      leads_per_day:   { metric: 'leads_cnt',  groupBy: 'day',         title: 'Лиды по дням',  defaultType: 'bar' },
+      by_source:       { metric: 'leads_cnt',  groupBy: 'source_slug', title: 'По источнику',  defaultType: 'bar' },
+      by_warmth:       { metric: 'leads_cnt',  groupBy: 'warmth',      title: 'По интенту',    defaultType: 'pie' },
+      avg_score_trend: { metric: 'avg_score',  groupBy: 'day',         title: 'Средний скор',  defaultType: 'line' },
+    }
+    for (const [id, meta] of Object.entries(legacyTypeMap)) {
+      const t = ct[id]
+      migrated[id] = {
+        id,
+        title: meta.title,
+        type: VALID_CHART_TYPES.includes(t as ChartType) ? (t as ChartType) : meta.defaultType,
+        metric: meta.metric,
+        groupBy: meta.groupBy,
+        collapsed: false,
+      }
+    }
+    result.chartConfig = safeChartConfig(migrated, layout)
+  } else {
+    // No chartConfig at all — build from defaults, filling layout gaps
+    result.chartConfig = safeChartConfig(null, layout)
   }
 
   // theme
