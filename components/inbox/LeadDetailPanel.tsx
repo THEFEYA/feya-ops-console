@@ -1,12 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { toast } from 'sonner'
-import { X, ExternalLink, CheckCircle, Star, XCircle, FileText, Info, MessageCircle } from 'lucide-react'
+import { X, ExternalLink, CheckCircle, Star, XCircle, FileText, Info, MessageCircle, ChevronDown, ChevronUp } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
 import { InlineSpinner } from '@/components/shared/LoadingSpinner'
+import { InfoCircle } from '@/components/shared/InfoCircle'
 import { type NormalisedLead, generateLeadReasons } from '@/lib/field-resolver'
 import {
   formatDateTime,
@@ -24,30 +25,95 @@ interface Props {
 
 type OutcomeType = 'approved' | 'shortlisted' | 'rejected'
 
+// Module-level cache for UI terms dictionary — fetched once per page load
+let uiTermsCache: Record<string, string> | null = null
+
 export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
   const [note, setNote] = useState('')
   const [loading, setLoading] = useState<OutcomeType | null>(null)
   const [currentOutcome, setCurrentOutcome] = useState<OutcomeType | null>(
     (lead.status as OutcomeType) ?? null
   )
+  // UI terms dictionary: term → ru
+  const [uiTerms, setUiTerms] = useState<Record<string, string>>(uiTermsCache ?? {})
+  // "Почему это лид?" accordion
+  const [explainOpen, setExplainOpen] = useState(false)
+  const [explainText, setExplainText] = useState<string | null>(null)
+  const [explainSource, setExplainSource] = useState<'api' | 'fallback' | null>(null)
+  const [explainLoading, setExplainLoading] = useState(false)
 
   const reasons = generateLeadReasons(lead)
+
+  // Load UI terms dictionary once (module-level cache)
+  useEffect(() => {
+    if (uiTermsCache) { setUiTerms(uiTermsCache); return }
+    fetch(buildApiUrl('/api/sb/query', { name: 'ui_terms_ru' }), { cache: 'force-cache' })
+      .then((r) => r.ok ? r.json() : null)
+      .then((json) => {
+        if (!json) return
+        const dict: Record<string, string> = {}
+        for (const row of json.data ?? []) {
+          if (row.term) dict[String(row.term).toLowerCase()] = String(row.ru ?? row.term)
+        }
+        uiTermsCache = dict
+        setUiTerms(dict)
+      })
+      .catch(() => {})
+  }, [])
+
+  // Reset explain state when a different lead is selected
+  useEffect(() => {
+    setExplainOpen(false)
+    setExplainText(null)
+    setExplainSource(null)
+  }, [lead.id])
+
+  async function handleExplainToggle() {
+    const next = !explainOpen
+    setExplainOpen(next)
+    if (!next || explainText || explainLoading) return
+
+    setExplainLoading(true)
+    try {
+      const res = await fetch(
+        buildApiUrl('/api/sb/query', { name: 'lead_explain_ru', lead_id: String(lead.id) }),
+        { cache: 'no-store' }
+      )
+      if (res.ok) {
+        const json = await res.json()
+        const d = json.data
+        const text = d?.ru_explain ?? d?.ru_summary
+        if (text) {
+          setExplainText(text)
+          setExplainSource('api')
+        } else {
+          // Build fallback explanation from available fields
+          const parts = [
+            lead.contact_path && `Контакт для связи: ${lead.contact_path}`,
+            lead.match_terms?.length && `Совпавшие триггеры: ${lead.match_terms.join(', ')}`,
+            lead.evidence_text && `Доказательства: ${lead.evidence_text.slice(0, 300)}`,
+            lead.snippet && `Контекст из источника: «${lead.snippet.slice(0, 200)}»`,
+          ].filter(Boolean)
+          setExplainText(parts.length > 0 ? parts.join('\n\n') : 'Дополнительное пояснение отсутствует.')
+          setExplainSource('fallback')
+        }
+      }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setExplainLoading(false)
+    }
+  }
 
   async function handleOutcome(outcome: OutcomeType) {
     setLoading(outcome)
     try {
-      const token = typeof window !== 'undefined'
-        ? (new URLSearchParams(window.location.search).get('t') ?? sessionStorage.getItem('feya_token') ?? '')
-        : ''
-
       const res = await fetch(buildApiUrl('/api/actions/lead-outcome'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lead_id: lead.id, outcome, meta: { note: note || undefined } }),
       })
-
       const json = await res.json()
-
       if (!res.ok) {
         toast.error(`Ошибка: ${json.error ?? res.statusText}`)
       } else {
@@ -55,7 +121,7 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
         setCurrentOutcome(outcome)
         onOutcomeSet?.(lead.id, outcome)
       }
-    } catch (e) {
+    } catch {
       toast.error('Сетевая ошибка при установке исхода')
     } finally {
       setLoading(null)
@@ -95,16 +161,23 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
 
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* Scores */}
+
+        {/* Scores — with tooltip hints */}
         <div className="grid grid-cols-3 gap-2 text-center">
           {scorePercent != null && (
-            <div className="glass-card rounded-lg p-2">
+            <div className="glass-card rounded-lg p-2 relative">
+              <div className="absolute top-1 right-1">
+                <InfoCircle tooltip="Скоринг лида (0–100): взвешенная сумма intent_score, reach_score и quality_score. Значение ≥ 70 — высокий приоритет." />
+              </div>
               <div className="text-2xl font-bold font-mono text-neon-cyan">{scorePercent}</div>
               <div className="text-[10px] text-muted-foreground mt-0.5">Скор</div>
             </div>
           )}
           {lead.warmth && (
-            <div className="glass-card rounded-lg p-2">
+            <div className="glass-card rounded-lg p-2 relative">
+              <div className="absolute top-1 right-1">
+                <InfoCircle tooltip="Интент (warmth): горячий — явный запрос/покупка; тёплый — косвенный интерес; холодный — слабый сигнал." />
+              </div>
               <div className={`text-sm font-semibold ${warmthColor(lead.warmth)}`}>
                 {warmthLabel(lead.warmth)}
               </div>
@@ -112,7 +185,10 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
             </div>
           )}
           {lead.reach != null && (
-            <div className="glass-card rounded-lg p-2">
+            <div className="glass-card rounded-lg p-2 relative">
+              <div className="absolute top-1 right-1">
+                <InfoCircle tooltip="Охват (reach): примерная аудитория источника — подписчики, просмотры или вес площадки. Выше — шире распространение." />
+              </div>
               <div className="text-lg font-bold font-mono text-neon-purple">{lead.reach.toLocaleString()}</div>
               <div className="text-[10px] text-muted-foreground mt-0.5">Охват</div>
             </div>
@@ -193,25 +269,31 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
             <Info className="w-3.5 h-3.5" /> Доказательства (почему это лид)
           </p>
 
-          {/* Primary: evidence_text from enriched view */}
+          {/* evidence_text — primary */}
           {lead.evidence_text && (
             <p className="text-xs text-foreground/90 leading-relaxed bg-neon-green/5 border border-neon-green/20 rounded-lg p-3 mb-2">
               {lead.evidence_text}
             </p>
           )}
 
-          {/* Match terms */}
+          {/* match_terms — translated */}
           {lead.match_terms && lead.match_terms.length > 0 && (
             <div className="flex flex-wrap gap-1 mb-2">
-              {lead.match_terms.map((term, i) => (
-                <Badge key={i} variant="yellow">{term}</Badge>
-              ))}
+              {lead.match_terms.map((term, i) => {
+                const ru = uiTerms[term.toLowerCase()]
+                return (
+                  <div key={i} className="flex flex-col items-start">
+                    <Badge variant="yellow">{ru ?? term}</Badge>
+                    {ru && <span className="text-[9px] text-muted-foreground/50 px-1">{term}</span>}
+                  </div>
+                )
+              })}
             </div>
           )}
 
-          {/* Heuristic reasons — shown as fallback or supplement */}
-          {(!lead.evidence_text || reasons.length > 0) && (
-            <ul className="space-y-1">
+          {/* Heuristic reasons (fallback / supplement) */}
+          {reasons.length > 0 && (
+            <ul className="space-y-1 mb-2">
               {reasons.map((r, i) => (
                 <li key={i} className="flex items-start gap-2 text-xs text-foreground/80">
                   <span className="text-neon-green flex-shrink-0 mt-0.5">✓</span>
@@ -221,11 +303,15 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
             </ul>
           )}
 
-          <div className="mt-2 space-y-1">
+          <div className="space-y-1">
             {(lead.query_keyword || lead.keyword_used) && (
               <div className="flex items-center gap-2 text-xs">
                 <span className="text-muted-foreground">Ключ:</span>
-                <Badge variant="yellow">{lead.query_keyword ?? lead.keyword_used}</Badge>
+                <Badge variant="yellow">
+                  {uiTerms[(lead.query_keyword ?? lead.keyword_used ?? '').toLowerCase()]
+                    ?? lead.query_keyword
+                    ?? lead.keyword_used}
+                </Badge>
               </div>
             )}
             {lead.query_purpose && (
@@ -253,6 +339,43 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
               </div>
             )}
           </div>
+        </div>
+
+        {/* "Почему это лид?" accordion — loads ru_explain */}
+        <div className="border border-border rounded-lg overflow-hidden">
+          <button
+            type="button"
+            onClick={handleExplainToggle}
+            className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-foreground/80 hover:bg-secondary/40 transition-colors"
+          >
+            <span className="flex items-center gap-1.5">
+              {explainLoading
+                ? <InlineSpinner />
+                : <Info className="w-3.5 h-3.5 text-neon-cyan" />}
+              Почему это лид? (подробно)
+            </span>
+            {explainOpen
+              ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
+              : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
+          </button>
+          {explainOpen && (
+            <div className="px-3 pb-3 pt-1 text-xs leading-relaxed">
+              {explainLoading ? (
+                <p className="text-muted-foreground">Загрузка…</p>
+              ) : explainText ? (
+                <>
+                  <p className="text-foreground/85 whitespace-pre-wrap">{explainText}</p>
+                  {explainSource === 'fallback' && (
+                    <p className="text-muted-foreground/50 mt-2 text-[10px]">
+                      * Пояснение сформировано из доступных полей (ru_explain отсутствует)
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="text-muted-foreground">Данные недоступны</p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Note */}

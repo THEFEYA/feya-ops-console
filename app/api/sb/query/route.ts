@@ -10,6 +10,8 @@ import {
   getLeadAnalytics,
   getLeadAnalyticsRollup,
   getKpiTodayCounts,
+  getLeadExplainRu,
+  getUiTermsRu,
   getSchemaKeys,
   type InboxTab,
 } from '@/lib/api/queries'
@@ -30,6 +32,8 @@ const ALLOWED_QUERIES = [
   'pipeline_stats',
   'lead_analytics',
   'lead_analytics_rollup',
+  'lead_explain_ru',
+  'ui_terms_ru',
   'schema_keys',
 ] as const
 
@@ -104,12 +108,24 @@ export async function GET(req: NextRequest) {
         const days = req.nextUrl.searchParams.get('limit')
           ? Number(req.nextUrl.searchParams.get('limit'))
           : 90
-        data = await getLeadAnalyticsRollup(days)
+        const dateFrom = req.nextUrl.searchParams.get('date_from') ?? undefined
+        const dateTo = req.nextUrl.searchParams.get('date_to') ?? undefined
+        data = await getLeadAnalyticsRollup(days, dateFrom, dateTo)
         break
       }
 
       case 'kpi_today_counts':
         data = await getKpiTodayCounts()
+        break
+
+      case 'lead_explain_ru': {
+        const leadId = req.nextUrl.searchParams.get('lead_id') ?? ''
+        data = await getLeadExplainRu(leadId)
+        break
+      }
+
+      case 'ui_terms_ru':
+        data = await getUiTermsRu()
         break
 
       case 'schema_keys':
