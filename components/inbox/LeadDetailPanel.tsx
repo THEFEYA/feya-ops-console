@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { X, ExternalLink, CheckCircle, Star, XCircle, FileText, Info } from 'lucide-react'
+import { X, ExternalLink, CheckCircle, Star, XCircle, FileText, Info, MessageCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
@@ -147,6 +147,34 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
           )}
         </div>
 
+        {/* Contact — primary CTA when contact_path is available */}
+        {(lead.contact_path || lead.username) && (
+          <div>
+            <p className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
+              <MessageCircle className="w-3.5 h-3.5" /> Как связаться
+            </p>
+            <div className="space-y-1.5">
+              {lead.contact_path && (
+                <a
+                  href={lead.contact_path.startsWith('http') ? lead.contact_path : undefined}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-xs bg-neon-cyan/10 border border-neon-cyan/30 rounded-lg px-3 py-2 hover:bg-neon-cyan/20 transition-colors"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-neon-cyan flex-shrink-0" />
+                  <span className="text-neon-cyan font-medium truncate">{lead.contact_path}</span>
+                </a>
+              )}
+              {lead.username && (
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-muted-foreground w-20 flex-shrink-0">Юзернейм:</span>
+                  <span className="font-mono text-foreground/80">@{lead.username.replace(/^@/, '')}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Snippet */}
         {lead.snippet && (
           <div>
@@ -164,32 +192,67 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
           <p className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
             <Info className="w-3.5 h-3.5" /> Доказательства (почему это лид)
           </p>
-          <ul className="space-y-1">
-            {reasons.map((r, i) => (
-              <li key={i} className="flex items-start gap-2 text-xs text-foreground/80">
-                <span className="text-neon-green flex-shrink-0 mt-0.5">✓</span>
-                <span>{r}</span>
-              </li>
-            ))}
-          </ul>
-          {lead.keyword_used && (
-            <div className="mt-2 flex items-center gap-2 text-xs">
-              <span className="text-muted-foreground">Ключ:</span>
-              <Badge variant="yellow">{lead.keyword_used}</Badge>
+
+          {/* Primary: evidence_text from enriched view */}
+          {lead.evidence_text && (
+            <p className="text-xs text-foreground/90 leading-relaxed bg-neon-green/5 border border-neon-green/20 rounded-lg p-3 mb-2">
+              {lead.evidence_text}
+            </p>
+          )}
+
+          {/* Match terms */}
+          {lead.match_terms && lead.match_terms.length > 0 && (
+            <div className="flex flex-wrap gap-1 mb-2">
+              {lead.match_terms.map((term, i) => (
+                <Badge key={i} variant="yellow">{term}</Badge>
+              ))}
             </div>
           )}
-          {lead.query_string && (
-            <div className="mt-1 flex items-center gap-2 text-xs">
-              <span className="text-muted-foreground">Запрос:</span>
-              <span className="font-mono text-neon-cyan/70">{truncate(lead.query_string, 50)}</span>
-            </div>
+
+          {/* Heuristic reasons — shown as fallback or supplement */}
+          {(!lead.evidence_text || reasons.length > 0) && (
+            <ul className="space-y-1">
+              {reasons.map((r, i) => (
+                <li key={i} className="flex items-start gap-2 text-xs text-foreground/80">
+                  <span className="text-neon-green flex-shrink-0 mt-0.5">✓</span>
+                  <span>{r}</span>
+                </li>
+              ))}
+            </ul>
           )}
-          {lead.source_entity && (
-            <div className="mt-1 flex items-center gap-2 text-xs">
-              <span className="text-muted-foreground">Сущность:</span>
-              <span>{lead.source_entity}</span>
-            </div>
-          )}
+
+          <div className="mt-2 space-y-1">
+            {(lead.query_keyword || lead.keyword_used) && (
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-muted-foreground">Ключ:</span>
+                <Badge variant="yellow">{lead.query_keyword ?? lead.keyword_used}</Badge>
+              </div>
+            )}
+            {lead.query_purpose && (
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-muted-foreground">Цель запроса:</span>
+                <span className="text-foreground/70">{lead.query_purpose}</span>
+              </div>
+            )}
+            {lead.query_string && (
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-muted-foreground">Запрос:</span>
+                <span className="font-mono text-neon-cyan/70">{truncate(lead.query_string, 50)}</span>
+              </div>
+            )}
+            {lead.source_entity && (
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-muted-foreground">Сущность:</span>
+                <span>{lead.source_entity}</span>
+              </div>
+            )}
+            {lead.blocked_reason && (
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-muted-foreground">Блок:</span>
+                <span className="text-red-400">{lead.blocked_reason}</span>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Note */}

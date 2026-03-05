@@ -37,6 +37,14 @@ export interface NormalisedLead {
   source_entity?: string
   reach?: number
   event?: string
+  // enriched view fields
+  evidence_text?: string        // why this is a lead (pre-computed, primary)
+  match_terms?: string[]        // keyword/trigger matches
+  contact_path?: string         // primary contact URL or handle path
+  username?: string             // social handle / username
+  query_keyword?: string        // keyword that triggered discovery
+  query_purpose?: string        // declared purpose of the search query
+  blocked_reason?: string       // why lead was blocked (if any)
   // raw row for anything else
   _raw: AnyRecord
 }
@@ -61,6 +69,20 @@ export function normaliseLead(row: AnyRecord): NormalisedLead {
   const reach = resolveField<number>(row, 'reach', 'reach_score', 'audience', 'followers')
   const event = resolveField<string>(row, 'event', 'event_name', 'event_type', 'trigger')
 
+  // Enriched view fields
+  const evidence_text = resolveField<string>(row, 'evidence_text')
+  const rawTerms = row['match_terms']
+  const match_terms: string[] | undefined = Array.isArray(rawTerms)
+    ? rawTerms as string[]
+    : typeof rawTerms === 'string' && rawTerms
+      ? rawTerms.split(',').map((s) => s.trim()).filter(Boolean)
+      : undefined
+  const contact_path = resolveField<string>(row, 'contact_path')
+  const username = resolveField<string>(row, 'username', 'handle', 'user_handle')
+  const query_keyword = resolveField<string>(row, 'query_keyword')
+  const query_purpose = resolveField<string>(row, 'query_purpose')
+  const blocked_reason = resolveField<string>(row, 'blocked_reason')
+
   return {
     id,
     title,
@@ -79,6 +101,13 @@ export function normaliseLead(row: AnyRecord): NormalisedLead {
     source_entity,
     reach,
     event,
+    evidence_text,
+    match_terms,
+    contact_path,
+    username,
+    query_keyword,
+    query_purpose,
+    blocked_reason,
     _raw: row,
   }
 }

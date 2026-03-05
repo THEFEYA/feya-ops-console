@@ -4,10 +4,10 @@ import { NormalisedLead, NormalisedRun, normaliseLead, normaliseRun } from '../f
 export type InboxTab = 'b2b_hot' | 'people_hot' | 'event_review' | 'extract_people'
 
 const INBOX_VIEW_MAP: Record<InboxTab, string> = {
-  b2b_hot: 'mv_inbox_b2b_hot',
-  people_hot: 'mv_inbox_people_hot',
-  event_review: 'mv_inbox_event_review',
-  extract_people: 'mv_inbox_extract_people',
+  b2b_hot: 'inbox_b2b_hot_enriched',
+  people_hot: 'inbox_people_hot_enriched',
+  event_review: 'inbox_event_review_enriched',
+  extract_people: 'inbox_extract_people_enriched',
 }
 
 export async function getKpiToday() {
@@ -129,6 +129,30 @@ export async function getPipelineNodeStats() {
     .limit(5000)
   if (error) console.error('[getPipelineNodeStats]', error.message)
   return data ?? []
+}
+
+export async function getLeadAnalyticsRollup(days = 90) {
+  const sb = createAdminClient()
+  const cutoff = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
+  // Try with date filter first; fall back to unfiltered if 'day' column missing
+  let { data, error } = await sb
+    .from('lead_analytics_rollup')
+    .select('*')
+    .gte('day', cutoff)
+    .order('day', { ascending: false })
+    .limit(5000)
+  if (error?.message.includes('day') && error.message.includes('does not exist')) {
+    ;({ data, error } = await sb.from('lead_analytics_rollup').select('*').limit(5000))
+  }
+  if (error) console.error('[getLeadAnalyticsRollup]', error.message)
+  return data ?? []
+}
+
+export async function getKpiTodayCounts() {
+  const sb = createAdminClient()
+  const { data, error } = await sb.from('kpi_today_counts').select('*').limit(1).maybeSingle()
+  if (error) console.error('[getKpiTodayCounts]', error.message)
+  return data ?? {}
 }
 
 export async function getLeadAnalytics() {
