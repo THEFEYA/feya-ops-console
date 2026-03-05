@@ -131,16 +131,17 @@ export async function getPipelineNodeStats() {
   return data ?? []
 }
 
-export async function getLeadAnalyticsRollup(days = 90) {
+export async function getLeadAnalyticsRollup(days = 90, dateFrom?: string, dateTo?: string) {
   const sb = createAdminClient()
   const cutoff = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
-  // Try with date filter first; fall back to unfiltered if 'day' column missing
-  let { data, error } = await sb
-    .from('lead_analytics_rollup')
-    .select('*')
-    .gte('day', cutoff)
-    .order('day', { ascending: false })
-    .limit(5000)
+  // Try with date filter; fall back to unfiltered if 'day' column missing
+  let { data, error } = dateFrom && dateTo
+    ? await sb.from('lead_analytics_rollup').select('*')
+        .gte('day', dateFrom).lte('day', dateTo)
+        .order('day', { ascending: false }).limit(5000)
+    : await sb.from('lead_analytics_rollup').select('*')
+        .gte('day', cutoff)
+        .order('day', { ascending: false }).limit(5000)
   if (error?.message.includes('day') && error.message.includes('does not exist')) {
     ;({ data, error } = await sb.from('lead_analytics_rollup').select('*').limit(5000))
   }
@@ -153,6 +154,29 @@ export async function getKpiTodayCounts() {
   const { data, error } = await sb.from('kpi_today_counts').select('*').limit(1).maybeSingle()
   if (error) console.error('[getKpiTodayCounts]', error.message)
   return data ?? {}
+}
+
+export async function getLeadExplainRu(leadId: string) {
+  if (!leadId) return null
+  const sb = createAdminClient()
+  const { data, error } = await sb
+    .from('lead_explain_ru')
+    .select('lead_id, ru_summary, ru_explain')
+    .eq('lead_id', leadId)
+    .limit(1)
+    .maybeSingle()
+  if (error) console.error('[getLeadExplainRu]', error.message)
+  return data ?? null
+}
+
+export async function getUiTermsRu() {
+  const sb = createAdminClient()
+  const { data, error } = await sb
+    .from('ui_terms_ru_v')
+    .select('term, ru, kind')
+    .limit(2000)
+  if (error) console.error('[getUiTermsRu]', error.message)
+  return data ?? []
 }
 
 export async function getLeadAnalytics() {
