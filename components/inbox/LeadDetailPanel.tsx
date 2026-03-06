@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { toast } from 'sonner'
-import { X, ExternalLink, CheckCircle, Star, XCircle, FileText, Info, MessageCircle, ChevronDown, ChevronUp } from 'lucide-react'
+import { X, ExternalLink, CheckCircle, Star, XCircle, FileText, Info, MessageCircle, ChevronDown, ChevronUp, Clock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
@@ -23,17 +23,54 @@ interface Props {
   onOutcomeSet?: (leadId: string | number, outcome: string) => void
 }
 
-type OutcomeType = 'approved' | 'shortlisted' | 'rejected'
+type StageType =
+  | 'shortlisted'
+  | 'approved'
+  | 'rejected'
+  | 'qualified'
+  | 'contacted'
+  | 'replied'
+  | 'meeting'
+  | 'proposal'
+  | 'won'
+  | 'lost'
+
+const STAGE_LABELS: Record<StageType, string> = {
+  shortlisted: 'Шортлист',
+  approved: 'Одобрен',
+  rejected: 'Отклонён',
+  qualified: 'Квалифицирован',
+  contacted: 'Написали',
+  replied: 'Ответил',
+  meeting: 'Встреча',
+  proposal: 'КП отправлено',
+  won: 'Сделка',
+  lost: 'Провал',
+}
+
+const STAGE_COLORS: Record<StageType, string> = {
+  shortlisted: 'text-neon-cyan border-neon-cyan/40 bg-neon-cyan/10',
+  approved: 'text-neon-green border-neon-green/40 bg-neon-green/10',
+  rejected: 'text-red-400 border-red-400/40 bg-red-400/10',
+  qualified: 'text-blue-400 border-blue-400/40 bg-blue-400/10',
+  contacted: 'text-yellow-400 border-yellow-400/40 bg-yellow-400/10',
+  replied: 'text-orange-400 border-orange-400/40 bg-orange-400/10',
+  meeting: 'text-purple-400 border-purple-400/40 bg-purple-400/10',
+  proposal: 'text-indigo-400 border-indigo-400/40 bg-indigo-400/10',
+  won: 'text-neon-green border-neon-green/60 bg-neon-green/20',
+  lost: 'text-muted-foreground border-border bg-secondary/40',
+}
 
 // Module-level cache for UI terms dictionary — fetched once per page load
 let uiTermsCache: Record<string, string> | null = null
 
 export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
   const [note, setNote] = useState('')
-  const [loading, setLoading] = useState<OutcomeType | null>(null)
-  const [currentOutcome, setCurrentOutcome] = useState<OutcomeType | null>(
-    (lead.status as OutcomeType) ?? null
+  const [loading, setLoading] = useState<StageType | null>(null)
+  const [currentStage, setCurrentStage] = useState<StageType | null>(
+    (lead.status as StageType) ?? null
   )
+  const [stageSetAt, setStageSetAt] = useState<string | null>(null)
   // UI terms dictionary: term → ru
   const [uiTerms, setUiTerms] = useState<Record<string, string>>(uiTermsCache ?? {})
   // "Почему это лид?" accordion
@@ -61,11 +98,28 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
       .catch(() => {})
   }, [])
 
-  // Reset explain state when a different lead is selected
+  // Load current stage from DB when lead changes
   useEffect(() => {
+    setCurrentStage((lead.status as StageType) ?? null)
+    setStageSetAt(null)
     setExplainOpen(false)
     setExplainText(null)
     setExplainSource(null)
+
+    if (!lead.id) return
+    fetch(buildApiUrl('/api/actions/lead-outcome', { lead_id: String(lead.id) }), { cache: 'no-store' })
+      .then((r) => r.ok ? r.json() : null)
+      .then((json) => {
+        const latest = json?.data?.latest
+        if (latest) {
+          const s = (latest.outcome ?? latest.stage) as StageType | undefined
+          if (s) {
+            setCurrentStage(s)
+            setStageSetAt(latest.created_at ?? null)
+          }
+        }
+      })
+      .catch(() => {})
   }, [lead.id])
 
   async function handleExplainToggle() {
@@ -87,7 +141,6 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
           setExplainText(text)
           setExplainSource('api')
         } else {
-          // Build fallback explanation from available fields
           const contactStr = lead.contact_path ?? lead.business_website ?? lead.business_phone
           const amenityRu = lead.amenity
             ? (uiTermsCache?.[`amenity:${lead.amenity}`.toLowerCase()]
@@ -113,31 +166,37 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
     }
   }
 
-  async function handleOutcome(outcome: OutcomeType) {
-    setLoading(outcome)
+  async function handleStage(stage: StageType) {
+    // Optimistic update
+    const prevStage = currentStage
+    const prevSetAt = stageSetAt
+    setCurrentStage(stage)
+    setStageSetAt(new Date().toISOString())
+    setLoading(stage)
+
     try {
       const res = await fetch(buildApiUrl('/api/actions/lead-outcome'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lead_id: lead.id, outcome, meta: { note: note || undefined } }),
+        body: JSON.stringify({ lead_id: lead.id, stage, note: note || undefined }),
       })
       const json = await res.json()
       if (!res.ok) {
+        // Rollback
+        setCurrentStage(prevStage)
+        setStageSetAt(prevSetAt)
         toast.error(`Ошибка: ${json.error ?? res.statusText}`)
       } else {
-        toast.success(`Исход установлен: ${outcomeLabel(outcome)}`)
-        setCurrentOutcome(outcome)
-        onOutcomeSet?.(lead.id, outcome)
+        toast.success(`Стадия: ${STAGE_LABELS[stage]}`)
+        onOutcomeSet?.(lead.id, stage)
       }
     } catch {
-      toast.error('Сетевая ошибка при установке исхода')
+      setCurrentStage(prevStage)
+      setStageSetAt(prevSetAt)
+      toast.error('Сетевая ошибка при установке стадии')
     } finally {
       setLoading(null)
     }
-  }
-
-  function outcomeLabel(o: OutcomeType): string {
-    return { approved: 'Одобрен', shortlisted: 'В шортлист', rejected: 'Отклонён' }[o]
   }
 
   const scorePercent = lead.score != null ? Math.min(100, lead.score) : null
@@ -429,50 +488,83 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
           <Textarea
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="Добавить заметку (будет сохранена в meta при установке исхода)…"
+            placeholder="Добавить заметку (будет сохранена при установке стадии)…"
             className="text-xs h-20 resize-none"
           />
         </div>
       </div>
 
       {/* Actions */}
-      <div className="p-4 border-t border-border space-y-2">
-        {currentOutcome && (
-          <div className="text-xs text-center text-muted-foreground mb-2">
-            Текущий статус: <span className="text-neon-cyan">{outcomeLabel(currentOutcome)}</span>
+      <div className="p-4 border-t border-border space-y-3">
+        {/* Current stage pill */}
+        {currentStage && (
+          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs ${STAGE_COLORS[currentStage]}`}>
+            <span className="font-medium">Стадия: {STAGE_LABELS[currentStage]}</span>
+            {stageSetAt && (
+              <span className="ml-auto flex items-center gap-1 text-[10px] opacity-60">
+                <Clock className="w-3 h-3" />
+                {formatDateTime(stageSetAt)}
+              </span>
+            )}
           </div>
         )}
-        <div className="grid grid-cols-3 gap-2">
-          <Button
-            variant="neon-green"
-            size="sm"
-            onClick={() => handleOutcome('approved')}
-            disabled={loading !== null}
-            className={currentOutcome === 'approved' ? 'ring-1 ring-neon-green' : ''}
-          >
-            {loading === 'approved' ? <InlineSpinner className="mr-1.5" /> : <CheckCircle className="w-3.5 h-3.5 mr-1.5" />}
-            Одобрить
-          </Button>
-          <Button
-            variant="neon"
-            size="sm"
-            onClick={() => handleOutcome('shortlisted')}
-            disabled={loading !== null}
-            className={currentOutcome === 'shortlisted' ? 'ring-1 ring-neon-cyan' : ''}
-          >
-            {loading === 'shortlisted' ? <InlineSpinner className="mr-1.5" /> : <Star className="w-3.5 h-3.5 mr-1.5" />}
-            Шортлист
-          </Button>
-          <Button
-            variant="neon-red"
-            size="sm"
-            onClick={() => handleOutcome('rejected')}
-            disabled={loading !== null}
-            className={currentOutcome === 'rejected' ? 'ring-1 ring-neon-red' : ''}
-          >
-            {loading === 'rejected' ? <InlineSpinner className="mr-1.5" /> : <XCircle className="w-3.5 h-3.5 mr-1.5" />}
-            Отклонить
-          </Button>
+
+        {/* Group 1: Decision */}
+        <div>
+          <p className="text-[10px] text-muted-foreground mb-1.5 uppercase tracking-wider">Решение</p>
+          <div className="grid grid-cols-3 gap-1.5">
+            <Button
+              variant="neon-green"
+              size="sm"
+              onClick={() => handleStage('approved')}
+              disabled={loading !== null}
+              className={`text-xs ${currentStage === 'approved' ? 'ring-1 ring-neon-green' : ''}`}
+            >
+              {loading === 'approved' ? <InlineSpinner className="mr-1" /> : <CheckCircle className="w-3 h-3 mr-1" />}
+              Одобрить
+            </Button>
+            <Button
+              variant="neon"
+              size="sm"
+              onClick={() => handleStage('shortlisted')}
+              disabled={loading !== null}
+              className={`text-xs ${currentStage === 'shortlisted' ? 'ring-1 ring-neon-cyan' : ''}`}
+            >
+              {loading === 'shortlisted' ? <InlineSpinner className="mr-1" /> : <Star className="w-3 h-3 mr-1" />}
+              Шортлист
+            </Button>
+            <Button
+              variant="neon-red"
+              size="sm"
+              onClick={() => handleStage('rejected')}
+              disabled={loading !== null}
+              className={`text-xs ${currentStage === 'rejected' ? 'ring-1 ring-red-400' : ''}`}
+            >
+              {loading === 'rejected' ? <InlineSpinner className="mr-1" /> : <XCircle className="w-3 h-3 mr-1" />}
+              Отклонить
+            </Button>
+          </div>
+        </div>
+
+        {/* Group 2: Pipeline progress */}
+        <div>
+          <p className="text-[10px] text-muted-foreground mb-1.5 uppercase tracking-wider">Прогресс</p>
+          <div className="grid grid-cols-4 gap-1">
+            {(['qualified', 'contacted', 'replied', 'meeting', 'proposal', 'won', 'lost'] as const).map((s) => (
+              <button
+                key={s}
+                onClick={() => handleStage(s)}
+                disabled={loading !== null}
+                className={`px-1.5 py-1 rounded border text-[10px] font-medium transition-colors disabled:opacity-50 ${
+                  currentStage === s
+                    ? STAGE_COLORS[s]
+                    : 'border-border text-muted-foreground hover:text-foreground hover:border-border/80'
+                }`}
+              >
+                {loading === s ? '...' : STAGE_LABELS[s]}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
     </aside>
