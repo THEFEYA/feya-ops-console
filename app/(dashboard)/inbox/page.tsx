@@ -112,6 +112,30 @@ export default function InboxPage() {
           serverDebug,
         },
       }))
+
+      // Batch-fetch latest stage for all visible leads
+      if (rows.length > 0) {
+        const ids = rows.map((r) => String(r.id))
+        fetch(buildApiUrl('/api/actions/lead-outcome/batch'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lead_ids: ids }),
+          cache: 'no-store',
+        })
+          .then((r) => r.ok ? r.json() : null)
+          .then((batchJson) => {
+            const map: Record<string, { stage: string }> = batchJson?.map ?? {}
+            if (Object.keys(map).length === 0) return
+            setOutcomes((prev) => {
+              const next = { ...prev }
+              for (const [id, val] of Object.entries(map)) {
+                next[id] = val.stage
+              }
+              return next
+            })
+          })
+          .catch(() => {})
+      }
     } catch (e) {
       console.error(e)
     } finally {

@@ -77,7 +77,6 @@ export async function insertLeadStage(
             lead_id: leadId,
             stage,
             meta: { ...meta, ...(note ? { note } : {}) },
-            updated_at: new Date().toISOString(),
           },
           { onConflict: 'lead_id' }
         )
@@ -110,6 +109,37 @@ export async function getLeadStageHistory(
 
     const rows = (data ?? []) as StageHistoryRow[]
     return { ok: true, data: { latest: rows[0] ?? null, history: rows } }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return { ok: false, error: message }
+  }
+}
+
+/** Batch-fetch latest stage for a set of lead IDs.
+ *  Returns a map: { [lead_id]: { stage, created_at } } */
+export async function getLeadStageBatch(
+  leadIds: Array<string | number>
+): Promise<{ ok: boolean; map?: Record<string, { stage: string; created_at: string }>; error?: string }> {
+  if (leadIds.length === 0) return { ok: true, map: {} }
+  const sb = createAdminClient()
+  try {
+    const { data, error } = await sb
+      .from('lead_outcomes')
+      .select('lead_id, stage, created_at')
+      .in('lead_id', leadIds)
+      .order('created_at', { ascending: false })
+
+    if (error) return { ok: false, error: error.message }
+
+    // Keep only the most-recent row per lead
+    const map: Record<string, { stage: string; created_at: string }> = {}
+    for (const row of data ?? []) {
+      const id = String(row.lead_id)
+      if (!map[id] && row.stage) {
+        map[id] = { stage: row.stage as string, created_at: row.created_at as string }
+      }
+    }
+    return { ok: true, map }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     return { ok: false, error: message }
@@ -182,7 +212,6 @@ export async function setLeadOutcome(
           lead_id: leadId,
           stage: outcome,
           meta,
-          updated_at: new Date().toISOString(),
         },
         { onConflict: 'lead_id' }
       )
