@@ -73,7 +73,8 @@ export async function POST(req: NextRequest) {
   const result = await insertLeadStage(lead_id, stage, note, meta as Record<string, unknown>)
 
   if (!result.ok) {
-    return Response.json({ error: result.error }, { status: 502 })
+    console.error('[lead-outcome POST] DB error:', result.error)
+    return Response.json({ error: result.error }, { status: 500 })
   }
 
   if (result.skipped) {

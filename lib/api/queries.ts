@@ -237,7 +237,7 @@ export async function getLeadAnalytics() {
       leads = (t3 ?? []) as Record<string, unknown>[]
     }
   }
-  const { data: outcomes } = await sb.from('lead_outcomes').select('outcome, created_at').limit(5000)
+  const { data: outcomes } = await sb.from('lead_outcomes').select('stage, created_at').limit(5000)
   return { leads, outcomes: outcomes ?? [] }
 }
 

@@ -112,7 +112,7 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
       .then((json) => {
         const latest = json?.data?.latest
         if (latest) {
-          const s = (latest.outcome ?? latest.stage) as StageType | undefined
+          const s = latest.stage as StageType | undefined
           if (s) {
             setCurrentStage(s)
             setStageSetAt(latest.created_at ?? null)

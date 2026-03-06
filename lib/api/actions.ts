@@ -18,7 +18,6 @@ export interface StageHistoryRow {
   id: number | string
   lead_id: string | number
   stage?: string
-  outcome?: string
   note?: string | null
   meta?: Record<string, unknown> | null
   created_at: string
@@ -39,14 +38,14 @@ export async function insertLeadStage(
   try {
     const { data: recent } = await sb
       .from('lead_outcomes')
-      .select('id, outcome, created_at')
+      .select('id, stage, created_at')
       .eq('lead_id', leadId)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()
 
     if (recent) {
-      const existingStage = recent.outcome
+      const existingStage = recent.stage
       const ageMs = Date.now() - new Date(recent.created_at as string).getTime()
       if (existingStage === stage && ageMs < 2 * 60 * 1000) {
         return { ok: true, skipped: true }
@@ -62,7 +61,7 @@ export async function insertLeadStage(
       .from('lead_outcomes')
       .insert({
         lead_id: leadId,
-        outcome: stage,     // use 'outcome' column (existing schema)
+        stage,
         meta: { ...meta, ...(note ? { note } : {}) },
         created_at: new Date().toISOString(),
       })
@@ -76,7 +75,7 @@ export async function insertLeadStage(
         .upsert(
           {
             lead_id: leadId,
-            outcome: stage,
+            stage,
             meta: { ...meta, ...(note ? { note } : {}) },
             updated_at: new Date().toISOString(),
           },
@@ -181,7 +180,7 @@ export async function setLeadOutcome(
       .upsert(
         {
           lead_id: leadId,
-          outcome,
+          stage: outcome,
           meta,
           updated_at: new Date().toISOString(),
         },
