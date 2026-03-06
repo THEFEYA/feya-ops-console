@@ -68,6 +68,10 @@ const PERIOD_OPTIONS: { key: Period; label: string; days: number }[] = [
   { key: 'custom', label: 'Свой', days: 0 },
 ]
 
+// Dimensions that v_source_funnel_daily actually has — used to isolate funnel from unsupported filters
+const SUPPORTED_FUNNEL_FILTERS = ['source_slug', 'source_platform', 'source_family', 'lead_kind'] as const
+type SupportedFunnelFilter = (typeof SUPPORTED_FUNNEL_FILTERS)[number]
+
 // ─── Data helpers ─────────────────────────────────────────────────────────────
 
 function aggBy(
@@ -155,20 +159,24 @@ interface FunnelSourceAgg {
   leads: number
   approved: number
   shortlisted: number
+  rejected: number
   qualified: number
   won: number
-  rate: number  // approved / leads * 100
+  rate: number           // approved / leads * 100
+  shortlisted_rate: number
+  rejected_rate: number
 }
 
 function aggregateFunnelBySource(rows: FunnelRow[]): FunnelSourceAgg[] {
-  const agg: Record<string, Omit<FunnelSourceAgg, 'source' | 'rate'>> = {}
+  const agg: Record<string, Omit<FunnelSourceAgg, 'source' | 'rate' | 'shortlisted_rate' | 'rejected_rate'>> = {}
   for (const r of rows) {
     const s = (r.source_slug ?? '').trim()
     if (!s) continue
-    if (!agg[s]) agg[s] = { leads: 0, approved: 0, shortlisted: 0, qualified: 0, won: 0 }
+    if (!agg[s]) agg[s] = { leads: 0, approved: 0, shortlisted: 0, rejected: 0, qualified: 0, won: 0 }
     agg[s].leads      += r.leads_captured ?? 0
     agg[s].approved   += r.approved       ?? 0
     agg[s].shortlisted+= r.shortlisted    ?? 0
+    agg[s].rejected   += r.rejected       ?? 0
     agg[s].qualified  += r.qualified      ?? 0
     agg[s].won        += r.won            ?? 0
   }
@@ -177,7 +185,9 @@ function aggregateFunnelBySource(rows: FunnelRow[]): FunnelSourceAgg[] {
     .map(([source, v]) => ({
       source,
       ...v,
-      rate: Math.round((v.approved / v.leads) * 1000) / 10,
+      rate:             Math.round((v.approved   / v.leads) * 1000) / 10,
+      shortlisted_rate: Math.round((v.shortlisted / v.leads) * 1000) / 10,
+      rejected_rate:    Math.round((v.rejected    / v.leads) * 1000) / 10,
     }))
     .sort((a, b) => b.rate - a.rate)
     .slice(0, 12)
@@ -451,11 +461,33 @@ function AnalyticsInner({ safeMode }: { safeMode: boolean }) {
     [dispatch, filtersLocked, showToast]
   )
 
+  // Local focus stage for conversion block (does NOT add to global filters)
+  const [focusStage, setFocusStage] = useState<'approved' | 'shortlisted' | 'rejected' | null>(null)
+
   // ── ALL conversion/funnel memos — MUST be before any early return (Rules of Hooks) ──
   const convBySource = useMemo(() => conversionBy(rows, 'source_slug'), [rows])
   const convByEvent  = useMemo(() => conversionBy(rows, 'event'),       [rows])
-  const funnelBySource = useMemo(() => aggregateFunnelBySource(funnelRows), [funnelRows])
-  const funnelByDay    = useMemo(() => aggregateFunnelByDay(funnelRows),    [funnelRows])
+
+  // Funnel: apply ONLY supported filter dims, ignore the rest
+  const funnelFilteredRows = useMemo(() => {
+    const supported = state.filters.filter(
+      (f) => SUPPORTED_FUNNEL_FILTERS.includes(f.dimension as SupportedFunnelFilter)
+    )
+    return applyFilters(funnelRows as unknown as RollupRow[], supported) as FunnelRow[]
+  }, [funnelRows, state.filters])
+
+  // Filters that are active but NOT supported by the funnel view
+  const ignoredFunnelFilters = useMemo(
+    () =>
+      state.filters
+        .filter((f) => !SUPPORTED_FUNNEL_FILTERS.includes(f.dimension as SupportedFunnelFilter))
+        .map((f) => f.dimension)
+        .filter((v, i, a) => a.indexOf(v) === i), // unique
+    [state.filters]
+  )
+
+  const funnelBySource = useMemo(() => aggregateFunnelBySource(funnelFilteredRows), [funnelFilteredRows])
+  const funnelByDay    = useMemo(() => aggregateFunnelByDay(funnelFilteredRows),    [funnelFilteredRows])
 
   // Sync period from context dateRange preset
   useEffect(() => {
@@ -753,112 +785,148 @@ function AnalyticsInner({ safeMode }: { safeMode: boolean }) {
         </div>
       </div>
 
-      {/* Conversion block — hidden in safe mode */}
-      {!safeMode && (funnelBySource.length > 0 || convBySource.length > 0 || convByEvent.length > 0) && (
+      {/* Conversion block — shown whenever funnel data exists; never hidden by unsupported filters */}
+      {!safeMode && (funnelRows.length > 0 || convBySource.length > 0 || convByEvent.length > 0) && (
         <div className="rounded-lg border border-border bg-card/50 overflow-hidden">
           <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/60 bg-secondary/30">
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium">Конверсия</span>
-              {funnelBySource.length > 0
+              {funnelRows.length > 0
                 ? <span className="text-[10px] text-neon-cyan/70 border border-neon-cyan/30 rounded px-1.5 py-0.5">v_source_funnel_daily</span>
                 : <span className="text-[10px] text-muted-foreground/60">расчёт из rollup</span>
               }
             </div>
-            {/* Outcome quick-filters */}
+            {/* Local focus-stage toggles — do NOT affect global filters */}
             <div className="flex items-center gap-1.5">
-              {['approved', 'shortlisted', 'rejected'].map((outcome) => {
-                const active = state.filters.some((f) => f.dimension === 'outcome' && f.value === outcome)
-                return (
-                  <button
-                    key={outcome}
-                    onClick={() => handleCrossFilter('outcome', outcome)}
-                    className={`px-2 py-0.5 rounded-full text-[10px] border transition-colors ${
-                      active
-                        ? 'bg-neon-cyan/20 border-neon-cyan/40 text-neon-cyan'
-                        : 'border-border text-muted-foreground hover:text-foreground'
-                    }`}
-                  >
-                    {outcome}
-                  </button>
-                )
-              })}
+              {(['approved', 'shortlisted', 'rejected'] as const).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setFocusStage((prev) => prev === s ? null : s)}
+                  className={`px-2 py-0.5 rounded-full text-[10px] border transition-colors ${
+                    focusStage === s
+                      ? s === 'approved'   ? 'bg-neon-green/20 border-neon-green/40 text-neon-green'
+                      : s === 'shortlisted' ? 'bg-neon-cyan/20 border-neon-cyan/40 text-neon-cyan'
+                      :                       'bg-red-500/20 border-red-500/40 text-red-400'
+                      : 'border-border text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {{ approved: 'Одобрено', shortlisted: 'Шортлист', rejected: 'Отклонено' }[s]}
+                </button>
+              ))}
             </div>
           </div>
 
-          {/* Native funnel view — v_source_funnel_daily */}
-          {funnelBySource.length > 0 && (
-            <div className="p-4 space-y-4">
-              {/* By-source table */}
-              <div>
-                <p className="text-xs font-medium text-muted-foreground mb-2">По источнику</p>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-[11px]">
-                    <thead>
-                      <tr className="text-muted-foreground border-b border-border/40">
-                        <th className="text-left py-1 pr-3 font-medium w-36">Источник</th>
-                        <th className="text-right py-1 px-2 font-medium">Лиды</th>
-                        <th className="text-right py-1 px-2 font-medium">Квалиф.</th>
-                        <th className="text-right py-1 px-2 font-medium">Approved</th>
-                        <th className="text-right py-1 px-2 font-medium">Won</th>
-                        <th className="text-left py-1 pl-3 font-medium w-28">Conv.rate</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {funnelBySource.map((r) => (
-                        <tr key={r.source} className="border-b border-border/20 hover:bg-secondary/20 transition-colors group">
-                          <td className="py-1.5 pr-3">
-                            <button
-                              onClick={() => handleCrossFilter('source_slug', r.source)}
-                              className="text-foreground/80 hover:text-neon-cyan transition-colors text-left truncate max-w-[130px] block"
-                              title={`Фильтр: source_slug=${r.source}`}
-                            >
-                              {r.source}
-                            </button>
-                          </td>
-                          <td className="text-right py-1.5 px-2 font-mono text-muted-foreground">{r.leads.toLocaleString()}</td>
-                          <td className="text-right py-1.5 px-2 font-mono text-muted-foreground">{r.qualified.toLocaleString()}</td>
-                          <td className="text-right py-1.5 px-2 font-mono text-neon-cyan">{r.approved.toLocaleString()}</td>
-                          <td className="text-right py-1.5 px-2 font-mono text-emerald-400">{r.won.toLocaleString()}</td>
-                          <td className="py-1.5 pl-3">
-                            <div className="flex items-center gap-1.5">
-                              <div className="w-20 h-1.5 bg-secondary rounded-full overflow-hidden">
-                                <div
-                                  className="h-full bg-neon-cyan rounded-full transition-all"
-                                  style={{ width: `${Math.min(r.rate, 100)}%` }}
-                                />
-                              </div>
-                              <span className="font-mono text-neon-cyan w-10 text-right shrink-0">{r.rate}%</span>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+          {/* Ignored-filters notice */}
+          {ignoredFunnelFilters.length > 0 && (
+            <div className="px-4 pt-2.5 pb-0">
+              <p className="text-[10px] text-amber-400/80 bg-amber-400/5 border border-amber-400/20 rounded px-2 py-1.5">
+                Конверсия не учитывает фильтры: <span className="font-mono">{ignoredFunnelFilters.join(', ')}</span>.
+                Для детализации по событию/персоне нужна витрина funnel_by_event (в плане).
+              </p>
+            </div>
+          )}
 
-              {/* Day trend — leads vs approved */}
-              {funnelByDay.length > 1 && (
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground mb-2">Тренд по дням</p>
-                  <ResponsiveContainer width="100%" height={160}>
-                    <BarChart data={funnelByDay} margin={{ left: 0, right: 8 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 15% 18%)" />
-                      <XAxis dataKey="day" tick={{ fill: '#9ca3af', fontSize: 9 }} />
-                      <YAxis yAxisId="left" tick={{ fill: '#9ca3af', fontSize: 9 }} />
-                      <YAxis yAxisId="right" orientation="right" tick={{ fill: '#9ca3af', fontSize: 9 }} unit="%" domain={[0, 100]} />
-                      <Tooltip contentStyle={tooltipStyle} itemStyle={itemStyle} labelStyle={labelStyle} />
-                      <Bar yAxisId="left" dataKey="leads"    name="Лиды"    fill="#4488ff" radius={[2, 2, 0, 0]} />
-                      <Bar yAxisId="left" dataKey="approved" name="Approved" fill="#00e5ff" radius={[2, 2, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+          {/* Native funnel view — v_source_funnel_daily */}
+          {funnelRows.length > 0 && (
+            <div className="p-4 space-y-4">
+              {funnelBySource.length === 0 && (
+                <p className="text-xs text-muted-foreground/70 text-center py-2">
+                  Нет данных по текущим фильтрам источника. Сбросьте фильтры или расширьте период.
+                </p>
+              )}
+              {funnelBySource.length > 0 && (
+                <>
+                  {/* By-source table */}
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground mb-2">По источнику</p>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[11px]">
+                        <thead>
+                          <tr className="text-muted-foreground border-b border-border/40">
+                            <th className="text-left py-1 pr-3 font-medium w-36">Источник</th>
+                            <th className="text-right py-1 px-2 font-medium">Лиды</th>
+                            <th className="text-right py-1 px-2 font-medium">Квалиф.</th>
+                            <th className={`text-right py-1 px-2 font-medium ${focusStage === 'approved' ? 'text-neon-green' : ''}`}>Одобрено</th>
+                            <th className={`text-right py-1 px-2 font-medium ${focusStage === 'shortlisted' ? 'text-neon-cyan' : ''}`}>Шортлист</th>
+                            <th className="text-right py-1 px-2 font-medium">Won</th>
+                            <th className="text-left py-1 pl-3 font-medium w-28">
+                              {focusStage === 'shortlisted' ? 'Шортлист %' : focusStage === 'rejected' ? 'Откл. %' : 'Одобр. %'}
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {funnelBySource.map((r) => {
+                            const displayRate =
+                              focusStage === 'shortlisted' ? r.shortlisted_rate
+                              : focusStage === 'rejected'  ? r.rejected_rate
+                              : r.rate
+                            const rateColor =
+                              focusStage === 'shortlisted' ? 'text-neon-cyan'
+                              : focusStage === 'rejected'  ? 'text-red-400'
+                              : 'text-neon-green'
+                            const barColor =
+                              focusStage === 'shortlisted' ? 'bg-neon-cyan'
+                              : focusStage === 'rejected'  ? 'bg-red-400'
+                              : 'bg-neon-green'
+                            return (
+                              <tr key={r.source} className="border-b border-border/20 hover:bg-secondary/20 transition-colors">
+                                <td className="py-1.5 pr-3">
+                                  <button
+                                    onClick={() => handleCrossFilter('source_slug', r.source)}
+                                    className="text-foreground/80 hover:text-neon-cyan transition-colors text-left truncate max-w-[130px] block"
+                                    title={`Фильтр: source_slug=${r.source}`}
+                                  >
+                                    {r.source}
+                                  </button>
+                                </td>
+                                <td className="text-right py-1.5 px-2 font-mono text-muted-foreground">{r.leads.toLocaleString()}</td>
+                                <td className="text-right py-1.5 px-2 font-mono text-blue-400">{r.qualified.toLocaleString()}</td>
+                                <td className={`text-right py-1.5 px-2 font-mono ${focusStage === 'approved' ? 'text-neon-green font-bold' : 'text-neon-green/70'}`}>{r.approved.toLocaleString()}</td>
+                                <td className={`text-right py-1.5 px-2 font-mono ${focusStage === 'shortlisted' ? 'text-neon-cyan font-bold' : 'text-neon-cyan/70'}`}>{r.shortlisted.toLocaleString()}</td>
+                                <td className="text-right py-1.5 px-2 font-mono text-emerald-400">{r.won.toLocaleString()}</td>
+                                <td className="py-1.5 pl-3">
+                                  <div className="flex items-center gap-1.5">
+                                    <div className="w-20 h-1.5 bg-secondary rounded-full overflow-hidden">
+                                      <div
+                                        className={`h-full ${barColor} rounded-full transition-all`}
+                                        style={{ width: `${Math.min(displayRate, 100)}%` }}
+                                      />
+                                    </div>
+                                    <span className={`font-mono ${rateColor} w-10 text-right shrink-0`}>{displayRate}%</span>
+                                  </div>
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Day trend — leads vs focused stage */}
+                  {funnelByDay.length > 1 && (
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground mb-2">Тренд по дням</p>
+                      <ResponsiveContainer width="100%" height={160}>
+                        <BarChart data={funnelByDay} margin={{ left: 0, right: 8 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 15% 18%)" />
+                          <XAxis dataKey="day" tick={{ fill: '#9ca3af', fontSize: 9 }} />
+                          <YAxis yAxisId="left" tick={{ fill: '#9ca3af', fontSize: 9 }} />
+                          <YAxis yAxisId="right" orientation="right" tick={{ fill: '#9ca3af', fontSize: 9 }} unit="%" domain={[0, 100]} />
+                          <Tooltip contentStyle={tooltipStyle} itemStyle={itemStyle} labelStyle={labelStyle} />
+                          <Bar yAxisId="left" dataKey="leads"    name="Лиды"    fill="#4488ff" radius={[2, 2, 0, 0]} />
+                          <Bar yAxisId="left" dataKey="approved" name="Одобрено" fill="#00ff88" radius={[2, 2, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
 
           {/* Fallback: client-side computation when funnel view is empty */}
-          {funnelBySource.length === 0 && (convBySource.length > 0 || convByEvent.length > 0) && (
+          {funnelRows.length === 0 && (convBySource.length > 0 || convByEvent.length > 0) && (
             <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
               {convBySource.length > 0 && (
                 <div>
