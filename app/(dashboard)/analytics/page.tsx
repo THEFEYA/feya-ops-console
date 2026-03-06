@@ -2,7 +2,8 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, Suspense } from 'react'
+import { useSearchParams } from 'next/navigation'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line, AreaChart, Area, PieChart, Pie, Cell, ScatterChart, Scatter,
@@ -320,7 +321,7 @@ function UniversalChart({
 
 // ─── Inner page (requires AnalyticsProvider) ──────────────────────────────────
 
-function AnalyticsInner() {
+function AnalyticsInner({ safeMode }: { safeMode: boolean }) {
   const { state, dispatch } = useAnalytics()
   const [allRows, setAllRows] = useState<RollupRow[] | null>(null)
   const [kpi, setKpi] = useState<KpiRow | null>(null)
@@ -374,6 +375,10 @@ function AnalyticsInner() {
     },
     [dispatch, filtersLocked, showToast]
   )
+
+  // ── Conversion data — MUST be before any early return (Rules of Hooks) ────────
+  const convBySource = useMemo(() => conversionBy(rows, 'source_slug'), [rows])
+  const convByEvent = useMemo(() => conversionBy(rows, 'event'), [rows])
 
   // Sync period from context dateRange preset
   useEffect(() => {
@@ -526,14 +531,17 @@ function AnalyticsInner() {
   }
   function handleDragEnd() { try { setDragId(null) } catch { /* ignore */ } }
 
-  // Conversion data (client-side from rollup rows)
-  const convBySource = useMemo(() => conversionBy(rows, 'source_slug'), [rows])
-  const convByEvent = useMemo(() => conversionBy(rows, 'event'), [rows])
-
   return (
     <div className="space-y-4 animate-fade-in" data-theme={state.theme !== 'dark' ? state.theme : undefined}>
+      {/* Safe-mode banner */}
+      {safeMode && (
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded bg-amber-500/10 border border-amber-500/30 text-xs text-amber-400">
+          🛡 Safe mode active — AiPanel, conversion block, toast и lock-filters отключены. Уберите <code className="font-mono">?safe=1</code> для полного режима.
+        </div>
+      )}
+
       {/* Toast notification */}
-      {toast && (
+      {!safeMode && toast && (
         <div className="fixed bottom-4 right-4 z-50 bg-gray-900 border border-neon-cyan/40 text-neon-cyan text-xs px-3 py-2 rounded-lg shadow-lg animate-fade-in pointer-events-none">
           {toast}
         </div>
@@ -543,19 +551,21 @@ function AnalyticsInner() {
       <div className="flex flex-wrap items-center gap-2 justify-between">
         {periodBar}
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Lock filters */}
-          <button
-            onClick={() => setFiltersLocked((v) => !v)}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded border text-xs transition-colors ${
-              filtersLocked
-                ? 'bg-amber-500/20 border-amber-500/40 text-amber-400'
-                : 'border-border text-muted-foreground hover:text-foreground hover:border-border/80'
-            }`}
-            title={filtersLocked ? 'Фильтры заблокированы — клики не меняют фильтры' : 'Заблокировать фильтры'}
-          >
-            {filtersLocked ? <Lock size={13} /> : <Unlock size={13} />}
-            {filtersLocked ? 'Locked' : 'Lock'}
-          </button>
+          {/* Lock filters — hidden in safe mode */}
+          {!safeMode && (
+            <button
+              onClick={() => setFiltersLocked((v) => !v)}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded border text-xs transition-colors ${
+                filtersLocked
+                  ? 'bg-amber-500/20 border-amber-500/40 text-amber-400'
+                  : 'border-border text-muted-foreground hover:text-foreground hover:border-border/80'
+              }`}
+              title={filtersLocked ? 'Фильтры заблокированы — клики не меняют фильтры' : 'Заблокировать фильтры'}
+            >
+              {filtersLocked ? <Lock size={13} /> : <Unlock size={13} />}
+              {filtersLocked ? 'Locked' : 'Lock'}
+            </button>
+          )}
           {/* Theme switcher */}
           <button
             onClick={() => {
@@ -570,7 +580,7 @@ function AnalyticsInner() {
             {state.theme}
           </button>
           <PresetBar />
-          <AiPanel rows={rows} />
+          {!safeMode && <AiPanel rows={rows} />}
           {/* Reset button */}
           <button
             onClick={() => {
@@ -658,8 +668,8 @@ function AnalyticsInner() {
         </div>
       </div>
 
-      {/* Conversion block */}
-      {(convBySource.length > 0 || convByEvent.length > 0) && (
+      {/* Conversion block — hidden in safe mode */}
+      {!safeMode && (convBySource.length > 0 || convByEvent.length > 0) && (
         <div className="rounded-lg border border-border bg-card/50 overflow-hidden">
           <div className="px-4 py-2.5 border-b border-border/60 bg-secondary/30">
             <span className="text-sm font-medium">Конверсия</span>
@@ -755,14 +765,24 @@ function AnalyticsInner() {
 
 // ─── Page wrapper with context ────────────────────────────────────────────────
 
-export default function AnalyticsPage() {
+function AnalyticsContent() {
+  const searchParams = useSearchParams()
+  const safeMode = searchParams.get('safe') === '1'
   return (
     <AnalyticsErrorBoundary>
       <AnalyticsProvider>
         <AnalyticsErrorBoundary>
-          <AnalyticsInner />
+          <AnalyticsInner safeMode={safeMode} />
         </AnalyticsErrorBoundary>
       </AnalyticsProvider>
     </AnalyticsErrorBoundary>
+  )
+}
+
+export default function AnalyticsPage() {
+  return (
+    <Suspense fallback={<div className="p-8 flex justify-center"><LoadingSpinner /></div>}>
+      <AnalyticsContent />
+    </Suspense>
   )
 }
