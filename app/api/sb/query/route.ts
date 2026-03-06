@@ -14,6 +14,8 @@ import {
   getLeadExplainRu,
   getUiTermsRu,
   getSchemaKeys,
+  getSourceFunnelDaily,
+  getFunnelBySourceEntity,
   type InboxTab,
 } from '@/lib/api/queries'
 
@@ -26,6 +28,7 @@ export const revalidate = 0
 const ALLOWED_QUERIES = [
   'kpi_today',
   'kpi_today_counts',
+  'v_kpi_today',
   'inbox',
   'runs_recent',
   'tasks_stats',
@@ -37,6 +40,8 @@ const ALLOWED_QUERIES = [
   'lead_explain_ru',
   'ui_terms_ru',
   'schema_keys',
+  'v_source_funnel_daily',
+  'v_funnel_by_source_entity',
 ] as const
 
 type QueryName = (typeof ALLOWED_QUERIES)[number]
@@ -146,6 +151,29 @@ export async function GET(req: NextRequest) {
         }
         data = await getSchemaKeys()
         break
+
+      // Alias: v_kpi_today is the same underlying view as kpi_today
+      case 'v_kpi_today':
+        data = await getKpiToday()
+        break
+
+      case 'v_source_funnel_daily': {
+        const sfDays = req.nextUrl.searchParams.get('limit')
+          ? Number(req.nextUrl.searchParams.get('limit'))
+          : 30
+        const sfFrom = req.nextUrl.searchParams.get('date_from') ?? undefined
+        const sfTo = req.nextUrl.searchParams.get('date_to') ?? undefined
+        data = await getSourceFunnelDaily(sfDays, sfFrom, sfTo)
+        break
+      }
+
+      case 'v_funnel_by_source_entity': {
+        const fbDays = req.nextUrl.searchParams.get('limit')
+          ? Number(req.nextUrl.searchParams.get('limit'))
+          : 30
+        data = await getFunnelBySourceEntity(fbDays)
+        break
+      }
 
       default:
         return Response.json({ error: 'Not implemented' }, { status: 400 })

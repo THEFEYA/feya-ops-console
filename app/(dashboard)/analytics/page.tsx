@@ -42,6 +42,24 @@ type RollupRow = Record<string, unknown>
 type KpiRow = Record<string, unknown>
 type Period = 'today' | '7d' | '30d' | '90d' | 'custom'
 
+// ─── Funnel types ──────────────────────────────────────────────────────────────
+interface FunnelRow {
+  source_slug?: string
+  day?: string
+  leads_captured?: number
+  approved?: number
+  shortlisted?: number
+  rejected?: number
+  qualified?: number
+  contacted?: number
+  replied?: number
+  meeting?: number
+  proposal?: number
+  won?: number
+  lost?: number
+  conversion_rate?: number
+}
+
 const PERIOD_OPTIONS: { key: Period; label: string; days: number }[] = [
   { key: 'today', label: 'Сегодня', days: 1 },
   { key: '7d', label: '7 дн.', days: 7 },
@@ -130,7 +148,63 @@ function kpiVal(row: KpiRow, ...keys: string[]): number {
   return 0
 }
 
-// ─── Conversion helpers ────────────────────────────────────────────────────────
+// ─── Funnel helpers ────────────────────────────────────────────────────────────
+
+interface FunnelSourceAgg {
+  source: string
+  leads: number
+  approved: number
+  shortlisted: number
+  qualified: number
+  won: number
+  rate: number  // approved / leads * 100
+}
+
+function aggregateFunnelBySource(rows: FunnelRow[]): FunnelSourceAgg[] {
+  const agg: Record<string, Omit<FunnelSourceAgg, 'source' | 'rate'>> = {}
+  for (const r of rows) {
+    const s = (r.source_slug ?? '').trim()
+    if (!s) continue
+    if (!agg[s]) agg[s] = { leads: 0, approved: 0, shortlisted: 0, qualified: 0, won: 0 }
+    agg[s].leads      += r.leads_captured ?? 0
+    agg[s].approved   += r.approved       ?? 0
+    agg[s].shortlisted+= r.shortlisted    ?? 0
+    agg[s].qualified  += r.qualified      ?? 0
+    agg[s].won        += r.won            ?? 0
+  }
+  return Object.entries(agg)
+    .filter(([, v]) => v.leads > 0)
+    .map(([source, v]) => ({
+      source,
+      ...v,
+      rate: Math.round((v.approved / v.leads) * 1000) / 10,
+    }))
+    .sort((a, b) => b.rate - a.rate)
+    .slice(0, 12)
+}
+
+interface FunnelDayPoint { day: string; leads: number; approved: number; rate: number }
+
+function aggregateFunnelByDay(rows: FunnelRow[]): FunnelDayPoint[] {
+  const byDay: Record<string, { leads: number; approved: number }> = {}
+  for (const r of rows) {
+    const d = (r.day ?? '').slice(0, 10)
+    if (!d) continue
+    if (!byDay[d]) byDay[d] = { leads: 0, approved: 0 }
+    byDay[d].leads    += r.leads_captured ?? 0
+    byDay[d].approved += r.approved       ?? 0
+  }
+  return Object.entries(byDay)
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([day, v]) => ({
+      day: day.slice(5),   // MM-DD
+      leads: v.leads,
+      approved: v.approved,
+      rate: v.leads > 0 ? Math.round((v.approved / v.leads) * 1000) / 10 : 0,
+    }))
+}
+
+// ─── Conversion helpers (fallback when funnel views are empty) ─────────────────
 
 function conversionBy(
   rows: RollupRow[],
@@ -325,6 +399,7 @@ function AnalyticsInner({ safeMode }: { safeMode: boolean }) {
   const { state, dispatch } = useAnalytics()
   const [allRows, setAllRows] = useState<RollupRow[] | null>(null)
   const [kpi, setKpi] = useState<KpiRow | null>(null)
+  const [funnelRows, setFunnelRows] = useState<FunnelRow[]>([])
   const [loading, setLoading] = useState(true)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [period, setPeriod] = useState<Period>('30d')
@@ -376,9 +451,11 @@ function AnalyticsInner({ safeMode }: { safeMode: boolean }) {
     [dispatch, filtersLocked, showToast]
   )
 
-  // ── Conversion data — MUST be before any early return (Rules of Hooks) ────────
+  // ── ALL conversion/funnel memos — MUST be before any early return (Rules of Hooks) ──
   const convBySource = useMemo(() => conversionBy(rows, 'source_slug'), [rows])
-  const convByEvent = useMemo(() => conversionBy(rows, 'event'), [rows])
+  const convByEvent  = useMemo(() => conversionBy(rows, 'event'),       [rows])
+  const funnelBySource = useMemo(() => aggregateFunnelBySource(funnelRows), [funnelRows])
+  const funnelByDay    = useMemo(() => aggregateFunnelByDay(funnelRows),    [funnelRows])
 
   // Sync period from context dateRange preset
   useEffect(() => {
@@ -397,10 +474,12 @@ function AnalyticsInner({ safeMode }: { safeMode: boolean }) {
         const pParams = getPeriodParams(period, customFrom, customTo)
         // One shared dataset: rollup2 (falls back to rollup server-side)
         const rollupUrl = buildApiUrl('/api/sb/query', { name: 'lead_analytics_rollup2', ...pParams })
-        const kpiUrl = buildApiUrl('/api/sb/query', { name: 'kpi_today_counts' })
-        const [rollupRes, kpiRes] = await Promise.all([
-          fetch(rollupUrl, { cache: 'no-store' }),
-          fetch(kpiUrl, { cache: 'no-store' }),
+        const kpiUrl    = buildApiUrl('/api/sb/query', { name: 'kpi_today_counts' })
+        const funnelUrl = buildApiUrl('/api/sb/query', { name: 'v_source_funnel_daily', ...pParams })
+        const [rollupRes, kpiRes, funnelRes] = await Promise.all([
+          fetch(rollupUrl,  { cache: 'no-store' }),
+          fetch(kpiUrl,     { cache: 'no-store' }),
+          fetch(funnelUrl,  { cache: 'no-store' }),
         ])
         if (!rollupRes.ok) {
           const text = (await rollupRes.text()).slice(0, 500)
@@ -413,6 +492,12 @@ function AnalyticsInner({ safeMode }: { safeMode: boolean }) {
         if (kpiRes.ok) {
           const kpiJson = await kpiRes.json()
           if (!cancelled) setKpi(kpiJson.data ?? null)
+        }
+
+        // Funnel data — best-effort, don't block main render on failure
+        if (funnelRes.ok) {
+          const funnelJson = await funnelRes.json()
+          if (!cancelled) setFunnelRows(funnelJson.data ?? [])
         }
       } catch (e) {
         if (!cancelled) setErrorMsg(String(e))
@@ -669,94 +754,158 @@ function AnalyticsInner({ safeMode }: { safeMode: boolean }) {
       </div>
 
       {/* Conversion block — hidden in safe mode */}
-      {!safeMode && (convBySource.length > 0 || convByEvent.length > 0) && (
+      {!safeMode && (funnelBySource.length > 0 || convBySource.length > 0 || convByEvent.length > 0) && (
         <div className="rounded-lg border border-border bg-card/50 overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-border/60 bg-secondary/30">
-            <span className="text-sm font-medium">Конверсия</span>
-            <span className="text-[10px] text-muted-foreground/60 ml-2">approved / всего лидов</span>
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/60 bg-secondary/30">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">Конверсия</span>
+              {funnelBySource.length > 0
+                ? <span className="text-[10px] text-neon-cyan/70 border border-neon-cyan/30 rounded px-1.5 py-0.5">v_source_funnel_daily</span>
+                : <span className="text-[10px] text-muted-foreground/60">расчёт из rollup</span>
+              }
+            </div>
+            {/* Outcome quick-filters */}
+            <div className="flex items-center gap-1.5">
+              {['approved', 'shortlisted', 'rejected'].map((outcome) => {
+                const active = state.filters.some((f) => f.dimension === 'outcome' && f.value === outcome)
+                return (
+                  <button
+                    key={outcome}
+                    onClick={() => handleCrossFilter('outcome', outcome)}
+                    className={`px-2 py-0.5 rounded-full text-[10px] border transition-colors ${
+                      active
+                        ? 'bg-neon-cyan/20 border-neon-cyan/40 text-neon-cyan'
+                        : 'border-border text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {outcome}
+                  </button>
+                )
+              })}
+            </div>
           </div>
-          <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {convBySource.length > 0 && (
+
+          {/* Native funnel view — v_source_funnel_daily */}
+          {funnelBySource.length > 0 && (
+            <div className="p-4 space-y-4">
+              {/* By-source table */}
               <div>
                 <p className="text-xs font-medium text-muted-foreground mb-2">По источнику</p>
-                <div className="space-y-1.5">
-                  {convBySource.map((r) => (
-                    <div key={r.name} className="flex items-center gap-2">
-                      <button
-                        className="text-xs text-foreground/80 hover:text-neon-cyan transition-colors truncate w-28 text-left shrink-0"
-                        onClick={() => handleCrossFilter('source_slug', r.name)}
-                        title={`Фильтр: source_slug=${r.name}`}
-                      >
-                        {r.name}
-                      </button>
-                      <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-neon-cyan rounded-full transition-all"
-                          style={{ width: `${Math.min(r.rate, 100)}%` }}
-                        />
-                      </div>
-                      <span className="text-[10px] font-mono text-neon-cyan w-10 text-right shrink-0">
-                        {r.rate}%
-                      </span>
-                      <span className="text-[10px] text-muted-foreground shrink-0">
-                        {r.approved}/{r.total}
-                      </span>
-                    </div>
-                  ))}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[11px]">
+                    <thead>
+                      <tr className="text-muted-foreground border-b border-border/40">
+                        <th className="text-left py-1 pr-3 font-medium w-36">Источник</th>
+                        <th className="text-right py-1 px-2 font-medium">Лиды</th>
+                        <th className="text-right py-1 px-2 font-medium">Квалиф.</th>
+                        <th className="text-right py-1 px-2 font-medium">Approved</th>
+                        <th className="text-right py-1 px-2 font-medium">Won</th>
+                        <th className="text-left py-1 pl-3 font-medium w-28">Conv.rate</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {funnelBySource.map((r) => (
+                        <tr key={r.source} className="border-b border-border/20 hover:bg-secondary/20 transition-colors group">
+                          <td className="py-1.5 pr-3">
+                            <button
+                              onClick={() => handleCrossFilter('source_slug', r.source)}
+                              className="text-foreground/80 hover:text-neon-cyan transition-colors text-left truncate max-w-[130px] block"
+                              title={`Фильтр: source_slug=${r.source}`}
+                            >
+                              {r.source}
+                            </button>
+                          </td>
+                          <td className="text-right py-1.5 px-2 font-mono text-muted-foreground">{r.leads.toLocaleString()}</td>
+                          <td className="text-right py-1.5 px-2 font-mono text-muted-foreground">{r.qualified.toLocaleString()}</td>
+                          <td className="text-right py-1.5 px-2 font-mono text-neon-cyan">{r.approved.toLocaleString()}</td>
+                          <td className="text-right py-1.5 px-2 font-mono text-emerald-400">{r.won.toLocaleString()}</td>
+                          <td className="py-1.5 pl-3">
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-20 h-1.5 bg-secondary rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-neon-cyan rounded-full transition-all"
+                                  style={{ width: `${Math.min(r.rate, 100)}%` }}
+                                />
+                              </div>
+                              <span className="font-mono text-neon-cyan w-10 text-right shrink-0">{r.rate}%</span>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
-            )}
-            {convByEvent.length > 0 && (
-              <div>
-                <p className="text-xs font-medium text-muted-foreground mb-2">По событию</p>
-                <div className="space-y-1.5">
-                  {convByEvent.map((r) => (
-                    <div key={r.name} className="flex items-center gap-2">
-                      <button
-                        className="text-xs text-foreground/80 hover:text-neon-cyan transition-colors truncate w-28 text-left shrink-0"
-                        onClick={() => handleCrossFilter('event', r.name)}
-                        title={`Фильтр: event=${r.name}`}
-                      >
-                        {r.name}
-                      </button>
-                      <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-neon-cyan rounded-full transition-all"
-                          style={{ width: `${Math.min(r.rate, 100)}%` }}
-                        />
-                      </div>
-                      <span className="text-[10px] font-mono text-neon-cyan w-10 text-right shrink-0">
-                        {r.rate}%
-                      </span>
-                      <span className="text-[10px] text-muted-foreground shrink-0">
-                        {r.approved}/{r.total}
-                      </span>
-                    </div>
-                  ))}
+
+              {/* Day trend — leads vs approved */}
+              {funnelByDay.length > 1 && (
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-2">Тренд по дням</p>
+                  <ResponsiveContainer width="100%" height={160}>
+                    <BarChart data={funnelByDay} margin={{ left: 0, right: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 15% 18%)" />
+                      <XAxis dataKey="day" tick={{ fill: '#9ca3af', fontSize: 9 }} />
+                      <YAxis yAxisId="left" tick={{ fill: '#9ca3af', fontSize: 9 }} />
+                      <YAxis yAxisId="right" orientation="right" tick={{ fill: '#9ca3af', fontSize: 9 }} unit="%" domain={[0, 100]} />
+                      <Tooltip contentStyle={tooltipStyle} itemStyle={itemStyle} labelStyle={labelStyle} />
+                      <Bar yAxisId="left" dataKey="leads"    name="Лиды"    fill="#4488ff" radius={[2, 2, 0, 0]} />
+                      <Bar yAxisId="left" dataKey="approved" name="Approved" fill="#00e5ff" radius={[2, 2, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
                 </div>
-              </div>
-            )}
-          </div>
-          {/* Status/outcome quick filter */}
-          <div className="px-4 pb-4 flex flex-wrap items-center gap-2">
-            <span className="text-[10px] text-muted-foreground">Фильтр по исходу:</span>
-            {['approved', 'shortlisted', 'rejected'].map((outcome) => {
-              const active = state.filters.some((f) => f.dimension === 'outcome' && f.value === outcome)
-              return (
-                <button
-                  key={outcome}
-                  onClick={() => handleCrossFilter('outcome', outcome)}
-                  className={`px-2 py-0.5 rounded-full text-[10px] border transition-colors ${
-                    active
-                      ? 'bg-neon-cyan/20 border-neon-cyan/40 text-neon-cyan'
-                      : 'border-border text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  {outcome}
-                </button>
-              )
-            })}
-          </div>
+              )}
+            </div>
+          )}
+
+          {/* Fallback: client-side computation when funnel view is empty */}
+          {funnelBySource.length === 0 && (convBySource.length > 0 || convByEvent.length > 0) && (
+            <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {convBySource.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-2">По источнику</p>
+                  <div className="space-y-1.5">
+                    {convBySource.map((r) => (
+                      <div key={r.name} className="flex items-center gap-2">
+                        <button
+                          className="text-xs text-foreground/80 hover:text-neon-cyan transition-colors truncate w-28 text-left shrink-0"
+                          onClick={() => handleCrossFilter('source_slug', r.name)}
+                        >
+                          {r.name}
+                        </button>
+                        <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
+                          <div className="h-full bg-neon-cyan rounded-full" style={{ width: `${Math.min(r.rate, 100)}%` }} />
+                        </div>
+                        <span className="text-[10px] font-mono text-neon-cyan w-10 text-right shrink-0">{r.rate}%</span>
+                        <span className="text-[10px] text-muted-foreground shrink-0">{r.approved}/{r.total}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {convByEvent.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-2">По событию</p>
+                  <div className="space-y-1.5">
+                    {convByEvent.map((r) => (
+                      <div key={r.name} className="flex items-center gap-2">
+                        <button
+                          className="text-xs text-foreground/80 hover:text-neon-cyan transition-colors truncate w-28 text-left shrink-0"
+                          onClick={() => handleCrossFilter('event', r.name)}
+                        >
+                          {r.name}
+                        </button>
+                        <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
+                          <div className="h-full bg-neon-cyan rounded-full" style={{ width: `${Math.min(r.rate, 100)}%` }} />
+                        </div>
+                        <span className="text-[10px] font-mono text-neon-cyan w-10 text-right shrink-0">{r.rate}%</span>
+                        <span className="text-[10px] text-muted-foreground shrink-0">{r.approved}/{r.total}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

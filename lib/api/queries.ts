@@ -149,6 +149,36 @@ export async function getLeadAnalyticsRollup(days = 90, dateFrom?: string, dateT
   return data ?? []
 }
 
+export async function getSourceFunnelDaily(days = 30, dateFrom?: string, dateTo?: string) {
+  const sb = createAdminClient()
+  const cutoff = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
+  let q = sb.from('v_source_funnel_daily').select('*')
+  if (dateFrom && dateTo) {
+    q = q.gte('day', dateFrom).lte('day', dateTo)
+  } else {
+    q = q.gte('day', cutoff)
+  }
+  const { data, error } = await q.order('day', { ascending: false }).limit(10000)
+  if (error) console.error('[getSourceFunnelDaily]', error.message)
+  return data ?? []
+}
+
+export async function getFunnelBySourceEntity(days = 30) {
+  const sb = createAdminClient()
+  const cutoff = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
+  // Some deployments may not have a 'day' column — fall back to unfiltered
+  let { data, error } = await sb
+    .from('v_funnel_by_source_entity')
+    .select('*')
+    .gte('day', cutoff)
+    .limit(1000)
+  if (error?.message.includes('day') && error.message.includes('does not exist')) {
+    ;({ data, error } = await sb.from('v_funnel_by_source_entity').select('*').limit(1000))
+  }
+  if (error) console.error('[getFunnelBySourceEntity]', error.message)
+  return data ?? []
+}
+
 export async function getKpiTodayCounts() {
   const sb = createAdminClient()
   const { data, error } = await sb.from('kpi_today_counts').select('*').limit(1).maybeSingle()
