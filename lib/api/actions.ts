@@ -38,7 +38,7 @@ export async function insertLeadStage(
   try {
     const { data: recent } = await sb
       .from('lead_outcomes')
-      .select('id, stage, created_at')
+      .select('outcome_id, stage, created_at')
       .eq('lead_id', leadId)
       .order('created_at', { ascending: false })
       .limit(1)
