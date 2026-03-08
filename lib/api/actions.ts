@@ -2,6 +2,150 @@ import { createAdminClient } from '../supabase/server'
 
 export type OutcomeType = 'approved' | 'shortlisted' | 'rejected'
 
+export type StageType =
+  | 'shortlisted'
+  | 'approved'
+  | 'rejected'
+  | 'qualified'
+  | 'contacted'
+  | 'replied'
+  | 'meeting'
+  | 'proposal'
+  | 'won'
+  | 'lost'
+
+export interface StageHistoryRow {
+  id: number | string
+  lead_id: string | number
+  stage?: string
+  note?: string | null
+  meta?: Record<string, unknown> | null
+  created_at: string
+}
+
+/** Insert a new stage entry for a lead (history-style, not upsert).
+ *  Dedup: if the latest existing entry for the same lead has the same stage
+ *  and was created < 2 minutes ago, skip the insert. */
+export async function insertLeadStage(
+  leadId: string | number,
+  stage: StageType,
+  note?: string,
+  meta: Record<string, unknown> = {}
+): Promise<{ ok: boolean; data?: unknown; error?: string; skipped?: boolean }> {
+  const sb = createAdminClient()
+
+  // Dedup check: fetch the most recent entry for this lead
+  try {
+    const { data: recent } = await sb
+      .from('lead_outcomes')
+      .select('id, stage, created_at')
+      .eq('lead_id', leadId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (recent) {
+      const existingStage = recent.stage
+      const ageMs = Date.now() - new Date(recent.created_at as string).getTime()
+      if (existingStage === stage && ageMs < 2 * 60 * 1000) {
+        return { ok: true, skipped: true }
+      }
+    }
+  } catch {
+    // If dedup check fails, proceed with insert
+  }
+
+  // Insert new stage row
+  try {
+    const { data, error } = await sb
+      .from('lead_outcomes')
+      .insert({
+        lead_id: leadId,
+        stage,
+        meta: { ...meta, ...(note ? { note } : {}) },
+        created_at: new Date().toISOString(),
+      })
+      .select()
+      .single()
+
+    if (error) {
+      // Fallback: try upsert if insert fails (e.g. unique constraint)
+      const { data: upserted, error: upErr } = await sb
+        .from('lead_outcomes')
+        .upsert(
+          {
+            lead_id: leadId,
+            stage,
+            meta: { ...meta, ...(note ? { note } : {}) },
+          },
+          { onConflict: 'lead_id' }
+        )
+        .select()
+        .single()
+      if (upErr) return { ok: false, error: upErr.message }
+      return { ok: true, data: upserted }
+    }
+    return { ok: true, data }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return { ok: false, error: message }
+  }
+}
+
+/** Get the latest stage + last 10 history entries for a lead */
+export async function getLeadStageHistory(
+  leadId: string | number
+): Promise<{ ok: boolean; data?: { latest: StageHistoryRow | null; history: StageHistoryRow[] }; error?: string }> {
+  const sb = createAdminClient()
+  try {
+    const { data, error } = await sb
+      .from('lead_outcomes')
+      .select('*')
+      .eq('lead_id', leadId)
+      .order('created_at', { ascending: false })
+      .limit(10)
+
+    if (error) return { ok: false, error: error.message }
+
+    const rows = (data ?? []) as StageHistoryRow[]
+    return { ok: true, data: { latest: rows[0] ?? null, history: rows } }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return { ok: false, error: message }
+  }
+}
+
+/** Batch-fetch latest stage for a set of lead IDs.
+ *  Returns a map: { [lead_id]: { stage, created_at } } */
+export async function getLeadStageBatch(
+  leadIds: Array<string | number>
+): Promise<{ ok: boolean; map?: Record<string, { stage: string; created_at: string }>; error?: string }> {
+  if (leadIds.length === 0) return { ok: true, map: {} }
+  const sb = createAdminClient()
+  try {
+    const { data, error } = await sb
+      .from('lead_outcomes')
+      .select('lead_id, stage, created_at')
+      .in('lead_id', leadIds)
+      .order('created_at', { ascending: false })
+
+    if (error) return { ok: false, error: error.message }
+
+    // Keep only the most-recent row per lead
+    const map: Record<string, { stage: string; created_at: string }> = {}
+    for (const row of data ?? []) {
+      const id = String(row.lead_id)
+      if (!map[id] && row.stage) {
+        map[id] = { stage: row.stage as string, created_at: row.created_at as string }
+      }
+    }
+    return { ok: true, map }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return { ok: false, error: message }
+  }
+}
+
 /** Whitelisted Supabase edge function names */
 export const ALLOWED_EDGE_FUNCTIONS = [
   'collector_serp_serper',
@@ -66,9 +210,8 @@ export async function setLeadOutcome(
       .upsert(
         {
           lead_id: leadId,
-          outcome,
+          stage: outcome,
           meta,
-          updated_at: new Date().toISOString(),
         },
         { onConflict: 'lead_id' }
       )

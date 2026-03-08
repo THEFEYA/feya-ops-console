@@ -15,14 +15,27 @@ interface Props {
 
 function outcomeVariant(o?: string): 'green' | 'cyan' | 'red' | 'outline' | undefined {
   if (!o) return undefined
-  if (o === 'approved') return 'green'
-  if (o === 'shortlisted') return 'cyan'
-  if (o === 'rejected') return 'red'
+  if (o === 'approved' || o === 'won') return 'green'
+  if (o === 'rejected' || o === 'lost') return 'red'
+  if (['shortlisted', 'qualified', 'contacted', 'replied', 'meeting', 'proposal'].includes(o)) return 'cyan'
   return 'outline'
 }
 
+const STAGE_LABELS_RU: Record<string, string> = {
+  approved:    'Одобрен',
+  shortlisted: 'Шортлист',
+  rejected:    'Отклонён',
+  qualified:   'Квалифицирован',
+  contacted:   'Написали',
+  replied:     'Ответил',
+  meeting:     'Встреча',
+  proposal:    'КП',
+  won:         'Сделка',
+  lost:        'Провал',
+}
+
 function outcomeLabel(o?: string): string {
-  return { approved: 'Одобрен', shortlisted: 'Шортлист', rejected: 'Отклонён' }[o ?? ''] ?? o ?? ''
+  return STAGE_LABELS_RU[o ?? ''] ?? o ?? ''
 }
 
 export function LeadTable({ leads, selectedId, onSelect, outcomes }: Props) {

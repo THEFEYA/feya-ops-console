@@ -45,6 +45,11 @@ export interface NormalisedLead {
   query_keyword?: string        // keyword that triggered discovery
   query_purpose?: string        // declared purpose of the search query
   blocked_reason?: string       // why lead was blocked (if any)
+  // B2B/OSM fields
+  business_name?: string
+  business_phone?: string
+  business_website?: string
+  amenity?: string              // OSM amenity type (e.g. "theatre", "restaurant")
   // raw row for anything else
   _raw: AnyRecord
 }
@@ -82,6 +87,11 @@ export function normaliseLead(row: AnyRecord): NormalisedLead {
   const query_keyword = resolveField<string>(row, 'query_keyword')
   const query_purpose = resolveField<string>(row, 'query_purpose')
   const blocked_reason = resolveField<string>(row, 'blocked_reason')
+  // B2B/OSM fields
+  const business_name = resolveField<string>(row, 'business_name', 'company_name', 'org_name')
+  const business_phone = resolveField<string>(row, 'business_phone', 'phone', 'tel')
+  const business_website = resolveField<string>(row, 'business_website', 'website', 'web', 'homepage')
+  const amenity = resolveField<string>(row, 'amenity', 'amenity_type', 'place_type', 'category')
 
   return {
     id,
@@ -108,6 +118,10 @@ export function normaliseLead(row: AnyRecord): NormalisedLead {
     query_keyword,
     query_purpose,
     blocked_reason,
+    business_name,
+    business_phone,
+    business_website,
+    amenity,
     _raw: row,
   }
 }

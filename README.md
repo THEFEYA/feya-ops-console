@@ -209,6 +209,21 @@ pnpm start
 
 ---
 
+## Project Canon
+
+> **Before any PR that touches logic, pipeline, tables, or analytics — read [`docs/feya/00_START_HERE.md`](./docs/feya/00_START_HERE.md) first.**
+
+| File | Contents |
+|------|----------|
+| [00_START_HERE.md](./docs/feya/00_START_HERE.md) | Where to start, PR rules, source of truth |
+| [01_CANON.md](./docs/feya/01_CANON.md) | What FEYA is, entity model, pipeline, gate vs score |
+| [02_WORKING_RULES.md](./docs/feya/02_WORKING_RULES.md) | How we work, schema drift guardrails, explainability |
+| [03_CURRENT_STATE.md](./docs/feya/03_CURRENT_STATE.md) | What works now, bottlenecks, near-term priorities |
+| [04_ROADMAP.md](./docs/feya/04_ROADMAP.md) | Phase A→D roadmap |
+| [05_DECISIONS.md](./docs/feya/05_DECISIONS.md) | Decisions log — add an entry for every logic-changing PR |
+
+---
+
 ## Лицензия
 
 Приватное использование.

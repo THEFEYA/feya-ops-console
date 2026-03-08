@@ -125,7 +125,7 @@ export async function getPipelineNodeStats() {
   // Aggregate tasks by pipeline stage/node
   const { data, error } = await sb
     .from('tasks')
-    .select('status, node, created_at')
+    .select('status, created_at')
     .limit(5000)
   if (error) console.error('[getPipelineNodeStats]', error.message)
   return data ?? []
@@ -146,6 +146,36 @@ export async function getLeadAnalyticsRollup(days = 90, dateFrom?: string, dateT
     ;({ data, error } = await sb.from('lead_analytics_rollup').select('*').limit(5000))
   }
   if (error) console.error('[getLeadAnalyticsRollup]', error.message)
+  return data ?? []
+}
+
+export async function getSourceFunnelDaily(days = 30, dateFrom?: string, dateTo?: string) {
+  const sb = createAdminClient()
+  const cutoff = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
+  let q = sb.from('v_source_funnel_daily').select('*')
+  if (dateFrom && dateTo) {
+    q = q.gte('day', dateFrom).lte('day', dateTo)
+  } else {
+    q = q.gte('day', cutoff)
+  }
+  const { data, error } = await q.order('day', { ascending: false }).limit(10000)
+  if (error) console.error('[getSourceFunnelDaily]', error.message)
+  return data ?? []
+}
+
+export async function getFunnelBySourceEntity(days = 30) {
+  const sb = createAdminClient()
+  const cutoff = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
+  // Some deployments may not have a 'day' column — fall back to unfiltered
+  let { data, error } = await sb
+    .from('v_funnel_by_source_entity')
+    .select('*')
+    .gte('day', cutoff)
+    .limit(1000)
+  if (error?.message.includes('day') && error.message.includes('does not exist')) {
+    ;({ data, error } = await sb.from('v_funnel_by_source_entity').select('*').limit(1000))
+  }
+  if (error) console.error('[getFunnelBySourceEntity]', error.message)
   return data ?? []
 }
 
@@ -207,8 +237,35 @@ export async function getLeadAnalytics() {
       leads = (t3 ?? []) as Record<string, unknown>[]
     }
   }
-  const { data: outcomes } = await sb.from('lead_outcomes').select('outcome, created_at').limit(5000)
+  const { data: outcomes } = await sb.from('lead_outcomes').select('stage, created_at').limit(5000)
   return { leads, outcomes: outcomes ?? [] }
+}
+
+export async function getLeadAnalyticsRollup2(days = 90, dateFrom?: string, dateTo?: string) {
+  const sb = createAdminClient()
+  const cutoff = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
+
+  // Try rollup2 first (has lead_kind column), fall back to rollup
+  const buildQuery = (table: string) => {
+    const q = dateFrom && dateTo
+      ? sb.from(table).select('*').gte('day', dateFrom).lte('day', dateTo).order('day', { ascending: false }).limit(5000)
+      : sb.from(table).select('*').gte('day', cutoff).order('day', { ascending: false }).limit(5000)
+    return q
+  }
+
+  let { data, error } = await buildQuery('lead_analytics_rollup2')
+  if (error) {
+    // fallback to rollup
+    ;({ data, error } = await buildQuery('lead_analytics_rollup'))
+    if (error?.message.includes('day') && error.message.includes('does not exist')) {
+      ;({ data, error } = await sb.from('lead_analytics_rollup').select('*').limit(5000))
+    }
+    if (error?.message.includes('lead_analytics_rollup')) {
+      ;({ data, error } = await sb.from('lead_analytics_rollup2').select('*').limit(5000))
+    }
+  }
+  if (error) console.error('[getLeadAnalyticsRollup2]', error.message)
+  return data ?? []
 }
 
 export async function getSchemaKeys() {
