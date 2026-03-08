@@ -2,94 +2,63 @@
 
 ## 1. Что такое FEYA
 
-FEYA — это intent-driven leadgen system.
-Цель проекта — не просто собирать лиды, а находить **реальный actionable demand** там, где у человека, организатора или бизнеса уже есть причина покупать, искать, сравнивать, обсуждать или подбирать продукт.
+FEYA — это intent-driven leadgen engine для нишевых fashion/expression продуктов, который:
+- ловит спрос в момент подготовки к событию (event-driven);
+- переводит "страницы/треды" в actionable tasks (люди/контакты);
+- хранит объяснение "почему это лид" + stage прогресса;
+- даёт Ops Console для контроля пайплайна и аналитики.
 
-Система должна работать по принципу:
-- people-first
-- actionable-first
-- noise-controlled
-- system-first, а не хаос-first
+Ключевая философия: **intent-first + people-first + actionable-first + noise-controlled**.
 
----
+## 2. Базовые сущности (канонично)
 
-## 2. Смысловая суть (ядро)
+**Query** → **Run** → **Lead (page/thread/person/org)** → **Task** → **Outreach/Decision** → **Outcome**.
 
-FEYA ловит момент, когда спрос уже есть (или почти есть), и превращает его в:
-- лид
-- задачу
-- контактный путь
-- готовое действие (outreach / follow-up / triage)
+Lead обязан поддерживать:
+- lead_kind (page/thread/person/org/event/b2b)
+- source_slug / source_platform / source_family
+- query_purpose
+- persona_tag (если применимо)
+- blocked_reason (если отфильтрован)
+- evidence_text / match_terms / snippet
+- contact_path / username / business_phone / business_website (если найдено)
+- score + компонентные скоры (intent/reach/freshness/…)
+- stage (pipeline stage) + history
 
-Главное: **не "красота UI" и не "сбор всего подряд"**, а **операционная пригодность**.
+## 3. Разделение "gate vs score" (не смешивать)
 
----
+**Gate (hard rules)**:
+- стоп-слова / forbidden policy
+- blocked domains / domain rules
+- нерелевантный event/source
+- нет пути extraction → нет шанса на contact
+- очевидный шум (jobs, pdf patterns и т.п.)
 
-## 3. Каноническая логика пайплайна
+**Score (ranking)**:
+- intent_score
+- reach_score (contactability)
+- freshness_score
+- event_relevance
+- business_value (опционально)
 
-Валидированный боевой путь:
+**Action policy** (после gate+score):
+- create task / enqueue extract / show in review / digest-only / discard
 
-1) Source → (SERP / reddit / forums / places)
-2) Query → Run
-3) Lead ingestion → gate (hard rules)
-4) Scoring → intent + reach + freshness
-5) Task gating → create tasks только если есть actionability
-6) Extract people (если нужно)
-7) Person lead → contact path → outreach tasks
-8) Digest → только actionable сущности
+## 4. B2C vs B2B — разные operational tracks
 
----
+B2C: человек готовится к событию → buying intent → outfit / custom / commission.
+B2B: vendor/procurement/организатор/стилист → sourcing → decision-maker extraction.
 
-## 4. Нельзя ломать (hard constraints)
+Не смешивать в одной логике без отдельного noise control.
 
-### 4.1. Hard gate всегда раньше score
+## 5. "Source of truth" (что считать правдой)
 
-Сначала блокируем:
-- negative keywords / adult-only policy
-- запрещённые домены / domain rules
-- job noise / role noise (особенно B2B)
-- junk / irrelevant / stale
+- Код + миграции: GitHub.
+- Runtime данные/метрики: Supabase.
+- Канон/правила/текущее состояние: docs/feya/* (в GitHub) + зеркало в Supabase (опционально).
 
-Только потом считаем score.
+## 6. Что нельзя ломать (constraints)
 
-### 4.2. "Лиды" — не плоские
-
-В системе обязаны существовать разные виды сущностей:
-- lead_kind: person / page / thread / business
-- parent_lead_id / lead relations
-- query_purpose (почему мы искали)
-- blocked_reason (почему отсеяно)
-- actionability status (можно ли реально действовать)
-
-### 4.3. Нельзя плодить tasks без triage capacity
-
-Если open tasks растут бесконтрольно — система деградирует.
-
-### 4.4. B2C и B2B — разные operational tracks
-
-Нельзя держать B2B и B2C в одной логике скоринга и gating.
-B2B заражается job-noise и role-noise, если не разделять контуры.
-
----
-
-## 5. Приоритеты системы (как в корпорации)
-
-В порядке важности:
-
-1) Actionability (можем ли реально написать / позвонить / сделать шаг)
-2) Noise-control (не допустить мусора)
-3) Throughput / triage (операционный контроль)
-4) Только потом UI/визуал
-5) Только потом "идеальные" словари/вселенная событий
-
----
-
-## 6. Что считается успехом (MVP definition)
-
-MVP считается достигнутым, когда:
-- система стабильно генерирует actionable лиды
-- есть понятные причины "почему это лид"
-- есть контактный путь у значимой доли лидов
-- triage работает (не захлёбываемся в задачах)
-- есть базовая конверсия по стадиям (stage funnel)
-- можно управлять источниками и видеть, что даёт результат
+- Стадии должны быть в одном словаре (stage), не outcome.
+- Любой UI/аналитика должны читать stage единообразно.
+- Любая новая витрина (view) должна иметь ясный контракт полей и проверку в UI.

@@ -209,6 +209,22 @@ pnpm start
 
 ---
 
+## FEYA Docs
+
+Канон проекта, рабочие правила и текущее состояние системы живут в [`docs/feya/`](./docs/feya/).
+Обязательно читать перед любым PR, который меняет логику/пайплайн/таблицы/аналитику.
+
+| Файл | Содержание |
+|------|-----------|
+| [00_START_HERE.md](./docs/feya/00_START_HERE.md) | С чего начать, правило PR, приоритеты FEYA |
+| [01_CANON.md](./docs/feya/01_CANON.md) | Что такое FEYA, пайплайн, hard constraints |
+| [02_WORKING_RULES.md](./docs/feya/02_WORKING_RULES.md) | Роль AI-агента, метод решений, стиль ответов |
+| [03_CURRENT_STATE.md](./docs/feya/03_CURRENT_STATE.md) | Baseline метрики, bottlenecks, валидированный путь |
+| [04_ROADMAP.md](./docs/feya/04_ROADMAP.md) | Phase A→D прогресс |
+| [05_DECISIONS.md](./docs/feya/05_DECISIONS.md) | Лог изменений (каждый PR с логикой — добавляет запись) |
+
+---
+
 ## Лицензия
 
 Приватное использование.
