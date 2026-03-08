@@ -1,25 +1,25 @@
-# FEYA Roadmap (ползунок прогресса)
+# FEYA — Roadmap (Phases)
 
-## Phase A — Governance / Source of Truth
+## Phase A — Stability
 
-- [ ] docs/feya/* лежат в GitHub (канон/правила/стейт/роадмап/решения)
-- [ ] любое изменение фиксируется в 05_DECISIONS.md
-- [ ] Claude в каждом PR сначала читает 00_START_HERE.md
+- [ ] Schema drift guardrails (stage/outcome/updated_at)
+- [ ] Stable funnel views
+- [ ] Batch fetching to avoid N+1
 
-## Phase B — Data correctness / Trust
+## Phase B — Explainability
 
-- [ ] outcomes/stages стабильны и не ломаются
-- [ ] funnel/конверсия не "пропадает" от фильтров
-- [ ] аналитика показывает реальные стадии и их rates
+- [ ] RU explanations for all lead kinds
+- [ ] Next-action recommendations
+- [ ] Evidence normalization
 
-## Phase C — Throughput / Triage / Task pressure
+## Phase C — Conversion & Learning loop
 
-- [ ] политика: task vs monitor vs digest-only vs discard
-- [ ] снижение open tasks, чистка legacy-noise
-- [ ] контроль качества (precision, % contactable)
+- [ ] Conversion by source/event/persona
+- [ ] Precision/noise dashboards
+- [ ] Decision logging -> training signal
 
-## Phase D — AI + Memory loop
+## Phase D — Automation
 
-- [ ] Copilot отвечает "только по данным"
-- [ ] ai_memory хранит инсайты/стратегии
-- [ ] автоматические рекомендации next best action
+- [ ] Contact extraction pipelines
+- [ ] Outreach queue + templates
+- [ ] AI Copilot grounded in DB + canon

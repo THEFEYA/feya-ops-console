@@ -1,19 +1,19 @@
-# FEYA — START HERE (обязательно читать перед любым PR)
+# FEYA — START HERE
 
-## 1) Сначала прочитай три документа:
+Если ты делаешь любой PR — сначала прочитай:
 
-- 01_CANON.md (что нельзя ломать)
-- 02_WORKING_RULES.md (как принимать решения)
-- 03_CURRENT_STATE.md (что реально в проекте сейчас)
+1) docs/feya/01_CANON.md
+2) docs/feya/02_WORKING_RULES.md
+3) docs/feya/03_CURRENT_STATE.md
 
-## 2) Правило работы (важно)
+## Правила PR
 
-Любой PR, который меняет логику/пайплайн/скоринг/таблицы/аналитику, обязан:
+- 1 PR = 1 цель
+- Любые изменения в логике должны сопровождаться записью в docs/feya/05_DECISIONS.md
+- Никогда не "чинить UI" без проверки истины в БД
 
-- добавить запись в 05_DECISIONS.md
-- обновить 03_CURRENT_STATE.md, если изменилась реальность
-- обновить 04_ROADMAP.md, если сдвинулся этап
+## Где хранится "правда"
 
-## 3) Приоритеты FEYA (корп-уровень)
-
-Actionability → Noise control → Throughput/Triage → Только потом "красота UI".
+- Canon: docs/feya/01_CANON.md
+- Runtime: Supabase таблицы/вьюхи
+- История решений: docs/feya/05_DECISIONS.md

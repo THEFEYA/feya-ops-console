@@ -1,64 +1,89 @@
-# FEYA_CANON
+# FEYA — Canon (Source of Truth)
 
-## 1. Что такое FEYA
+## 0) What FEYA is (in one line)
 
-FEYA — это intent-driven leadgen engine для нишевых fashion/expression продуктов, который:
-- ловит спрос в момент подготовки к событию (event-driven);
-- переводит "страницы/треды" в actionable tasks (люди/контакты);
-- хранит объяснение "почему это лид" + stage прогресса;
-- даёт Ops Console для контроля пайплайна и аналитики.
+FEYA is a signal-driven leadgen OS for event-driven fashion expression — capture intent → qualify → extract people → outreach.
 
-Ключевая философия: **intent-first + people-first + actionable-first + noise-controlled**.
+## 1) Core principle: "actionable-first"
 
-## 2. Базовые сущности (канонично)
+A lead is not a page. A lead is an actionable entity with a plausible path to contact.
 
-**Query** → **Run** → **Lead (page/thread/person/org)** → **Task** → **Outreach/Decision** → **Outcome**.
+If we cannot reach anyone, the object is either:
+- (A) a monitor-only candidate (watchlist), or
+- (B) a precursor to an extraction task (thread → person).
 
-Lead обязан поддерживать:
-- lead_kind (page/thread/person/org/event/b2b)
+## 2) Entity model (canonical)
+
+### Query
+
+Represents an intent hypothesis and its operational parameters (source, purpose, event context).
+
+### Lead
+
+A discovered candidate entity.
+
+Must include:
+- lead_kind: page | thread | person | org | venue | vendor
 - source_slug / source_platform / source_family
-- query_purpose
-- persona_tag (если применимо)
-- blocked_reason (если отфильтрован)
-- evidence_text / match_terms / snippet
-- contact_path / username / business_phone / business_website (если найдено)
-- score + компонентные скоры (intent/reach/freshness/…)
-- stage (pipeline stage) + history
+- score + score parts (intent, reach, freshness)
+- event tag (optional)
+- persona tag (optional)
+- parent_lead_id (optional)
+- status/stage (operational)
 
-## 3. Разделение "gate vs score" (не смешивать)
+### Task
 
-**Gate (hard rules)**:
-- стоп-слова / forbidden policy
-- blocked domains / domain rules
-- нерелевантный event/source
-- нет пути extraction → нет шанса на contact
-- очевидный шум (jobs, pdf patterns и т.п.)
+An action that the system requests from operator or automation:
+- review
+- extract_people
+- outreach_person
+- enrich_contact
+- domain_rule_update
+- etc.
 
-**Score (ranking)**:
-- intent_score
-- reach_score (contactability)
-- freshness_score
-- event_relevance
-- business_value (опционально)
+### Decision log (operator truth)
 
-**Action policy** (после gate+score):
-- create task / enqueue extract / show in review / digest-only / discard
+What the human decided and why. This becomes training signal.
 
-## 4. B2C vs B2B — разные operational tracks
+## 3) Pipeline (validated operational path)
 
-B2C: человек готовится к событию → buying intent → outfit / custom / commission.
-B2B: vendor/procurement/организатор/стилист → sourcing → decision-maker extraction.
+SERP / Reddit / Places / OSM / Forum threads
+→ normalize + hard-gate (negative/domain/irrelevant/noise)
+→ create review tasks
+→ if thread-like → extract people tasks
+→ if person found → outreach queue tasks
+→ digest only for actionable items
 
-Не смешивать в одной логике без отдельного noise control.
+## 4) Gate vs Score (must be separated)
 
-## 5. "Source of truth" (что считать правдой)
+### Hard gate first (stop early)
 
-- Код + миграции: GitHub.
-- Runtime данные/метрики: Supabase.
-- Канон/правила/текущее состояние: docs/feya/* (в GitHub) + зеркало в Supabase (опционально).
+Examples:
+- forbidden/negative
+- domain blocked
+- irrelevant to purpose
+- stale/noisy pattern
+- cannot extract people AND no contact path
 
-## 6. Что нельзя ломать (constraints)
+### Score second (prioritize)
 
-- Стадии должны быть в одном словаре (stage), не outcome.
-- Любой UI/аналитика должны читать stage единообразно.
-- Любая новая витрина (view) должна иметь ясный контракт полей и проверку в UI.
+Intent score, reach score, freshness score, event relevance, business value.
+
+### Action policy third
+
+- create task
+- monitor
+- discard
+
+## 5) B2C vs B2B must be separate tracks
+
+B2C: event prep, outfit buying, "where to buy", commission, custom.
+B2B: organizer/vendor/procurement/wardrobe sourcing — must avoid job noise.
+
+## 6) Source-of-truth hierarchy
+
+1) This Canon (docs/feya/01_CANON.md)
+2) Working rules (docs/feya/02_WORKING_RULES.md)
+3) Current state (docs/feya/03_CURRENT_STATE.md)
+4) Decisions log (docs/feya/05_DECISIONS.md)
+5) Everything else is supportive/appendix.

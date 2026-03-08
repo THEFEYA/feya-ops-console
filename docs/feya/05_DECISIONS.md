@@ -1,15 +1,14 @@
-# FEYA Decisions Log (коротко и по делу)
+# FEYA — Decisions Log
 
-Шаблон записи:
+## Template
 
-## YYYY-MM-DD — <короткое название>
+Date:
+Decision:
+Why:
+Impact:
+Links (PR/Issue):
+Notes:
 
-- Change:
-- Why:
-- Risk:
-- How to verify:
-- Rollback:
+## Log
 
----
-
-<!-- Добавляй новые записи сверху, самые свежие первыми -->
+- (empty)

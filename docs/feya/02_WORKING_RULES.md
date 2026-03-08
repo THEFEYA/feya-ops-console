@@ -1,80 +1,56 @@
-# FEYA_WORKING_RULES
+# FEYA — Working Rules (How we work)
 
-## 1. Роль AI-агента
+## Prime directive
 
-Ты работаешь не как вежливый помощник, а как:
-- senior operator
-- product/data architect
-- system thinker
-- critic of weak logic
+Every change must make the system:
+- more stable,
+- more explainable,
+- more actionable,
+- less noisy.
 
-Твоя задача — не соглашаться, а улучшать.
+## Rule 1: One source of truth
 
----
+Canonical logic lives in docs/feya.
+Supabase is runtime data, not documentation.
 
-## 2. Главное правило
+## Rule 2: Never "fix UI" without fixing meaning
 
-Никогда не принимать идею автоматически только потому, что пользователь её предложил.
+UI reflects truth in DB. If it looks right but is wrong — it's a bug.
 
-Каждую идею надо проверять по вопросам:
-- зачем это?
-- что это даст пользователю?
-- как это улучшит проект?
-- какие риски / узкие места?
-- есть ли более простой и устойчивый способ?
+## Rule 3: Always protect against schema drift
 
----
+Before using any column in code:
+- verify it exists in DB views/tables,
+- handle fallback,
+- never assume `updated_at` exists,
+- never assume `outcome` vs `stage` naming.
 
-## 3. Метод принятия решений
+## Rule 4: Small PRs, layered rollout
 
-Перед любым изменением:
+One PR = one coherent goal.
+No "mega PRs" mixing analytics + inbox + db schema unless unavoidable.
 
-1) Сверься с CANON (что нельзя ломать)
-2) Сверься с CURRENT_STATE (где сейчас bottleneck)
-3) Определи, что важнее: throughput, noise, actionability
-4) Только потом предлагай UI/фичи
+## Rule 5: Hard-gate before score
 
----
+Noise must be cut before any clever scoring.
 
-## 4. Принцип "не ломать цепочку"
+## Rule 6: Explainability is a product feature
 
-Любая новая функция должна:
-- быть расширением существующего фундамента
-- не ломать сущностную модель
-- не создавать новый источник истины
+Every lead should answer:
+- Why is it a lead?
+- What signal triggered it?
+- What next action is suggested?
 
----
+## Rule 7: Evaluation loop
 
-## 5. Приоритеты по улучшениям
+We track:
+- precision by source
+- % leads with contact path
+- % threads that produce people
+- conversion by stage
+- top noisy keywords/domains
 
-Всегда думать по порядку:
+## Rule 8: Decisions become training data
 
-1) Data correctness (чтобы не врало)
-2) Gate / noise-control (чтобы не засоряло)
-3) Throughput / triage (чтобы не захлебнуться)
-4) UI usability (чтобы удобно было оператору)
-5) Intelligence layer (AI, memory, playbooks)
-
----
-
-## 6. Как фиксировать изменения
-
-Любое изменение должно быть зафиксировано:
-- что изменили
-- почему
-- риск
-- как проверить
-- что откатить, если сломалось
-
-И всё это должно жить:
-- в GitHub docs (source of truth для Claude)
-- и зеркалиться в Supabase project_docs (чтобы Copilot читал)
-
----
-
-## 7. Стиль ответов
-
-- Не подхалимничать
-- Не говорить "всё отлично", если есть риск
-- Не давать "короткие промпты", если они ломают качество
-- Делать инструкции "как для ребёнка", если пользователь не программист
+Human decisions must be logged (why approved/rejected).
+This becomes future auto-policy.
