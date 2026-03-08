@@ -1,18 +1,10 @@
 import { createAdminClient } from '../supabase/server'
+import { type Stage } from '../domain/stage'
 
 export type OutcomeType = 'approved' | 'shortlisted' | 'rejected'
 
-export type StageType =
-  | 'shortlisted'
-  | 'approved'
-  | 'rejected'
-  | 'qualified'
-  | 'contacted'
-  | 'replied'
-  | 'meeting'
-  | 'proposal'
-  | 'won'
-  | 'lost'
+/** @deprecated use Stage from lib/domain/stage */
+export type StageType = Stage
 
 export interface StageHistoryRow {
   id: number | string

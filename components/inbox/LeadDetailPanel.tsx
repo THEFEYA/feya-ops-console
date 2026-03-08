@@ -16,6 +16,7 @@ import {
   truncate,
   buildApiUrl,
 } from '@/lib/utils'
+import { type Stage, STAGE_LABEL_RU, STAGE_GROUP, STAGES } from '@/lib/domain/stage'
 
 interface Props {
   lead: NormalisedLead
@@ -23,30 +24,8 @@ interface Props {
   onOutcomeSet?: (leadId: string | number, outcome: string) => void
 }
 
-type StageType =
-  | 'shortlisted'
-  | 'approved'
-  | 'rejected'
-  | 'qualified'
-  | 'contacted'
-  | 'replied'
-  | 'meeting'
-  | 'proposal'
-  | 'won'
-  | 'lost'
-
-const STAGE_LABELS: Record<StageType, string> = {
-  shortlisted: 'Шортлист',
-  approved: 'Одобрен',
-  rejected: 'Отклонён',
-  qualified: 'Квалифицирован',
-  contacted: 'Написали',
-  replied: 'Ответил',
-  meeting: 'Встреча',
-  proposal: 'КП отправлено',
-  won: 'Сделка',
-  lost: 'Провал',
-}
+// Stage type + labels imported from lib/domain/stage
+type StageType = Stage
 
 const STAGE_COLORS: Record<StageType, string> = {
   shortlisted: 'text-neon-cyan border-neon-cyan/40 bg-neon-cyan/10',
@@ -187,7 +166,7 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
         setStageSetAt(prevSetAt)
         toast.error(`Ошибка: ${json.error ?? res.statusText}`)
       } else {
-        toast.success(`Стадия: ${STAGE_LABELS[stage]}`)
+        toast.success(`Стадия: ${STAGE_LABEL_RU[stage]}`)
         onOutcomeSet?.(lead.id, stage)
       }
     } catch {
@@ -499,7 +478,7 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
         {/* Current stage pill */}
         {currentStage && (
           <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs ${STAGE_COLORS[currentStage]}`}>
-            <span className="font-medium">Стадия: {STAGE_LABELS[currentStage]}</span>
+            <span className="font-medium">Стадия: {STAGE_LABEL_RU[currentStage]}</span>
             {stageSetAt && (
               <span className="ml-auto flex items-center gap-1 text-[10px] opacity-60">
                 <Clock className="w-3 h-3" />
@@ -550,7 +529,7 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
         <div>
           <p className="text-[10px] text-muted-foreground mb-1.5 uppercase tracking-wider">Прогресс</p>
           <div className="grid grid-cols-4 gap-1">
-            {(['qualified', 'contacted', 'replied', 'meeting', 'proposal', 'won', 'lost'] as const).map((s) => (
+            {STAGES.filter((s) => STAGE_GROUP[s] === 'progress').map((s) => (
               <button
                 key={s}
                 onClick={() => handleStage(s)}
@@ -561,7 +540,7 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
                     : 'border-border text-muted-foreground hover:text-foreground hover:border-border/80'
                 }`}
               >
-                {loading === s ? '...' : STAGE_LABELS[s]}
+                {loading === s ? '...' : STAGE_LABEL_RU[s]}
               </button>
             ))}
           </div>
