@@ -185,7 +185,7 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
         // Rollback
         setCurrentStage(prevStage)
         setStageSetAt(prevSetAt)
-        toast.error(`Ошибка: ${json.error ?? res.statusText}`)
+        toast.error('Не удалось сохранить стадию. Изменение не записано в базу.')
       } else {
         toast.success(`Стадия: ${STAGE_LABELS[stage]}`)
         onOutcomeSet?.(lead.id, stage)
@@ -193,7 +193,7 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
     } catch {
       setCurrentStage(prevStage)
       setStageSetAt(prevSetAt)
-      toast.error('Сетевая ошибка при установке стадии')
+      toast.error('Не удалось сохранить стадию. Изменение не записано в базу.')
     } finally {
       setLoading(null)
     }
