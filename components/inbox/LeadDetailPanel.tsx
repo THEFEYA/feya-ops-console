@@ -182,12 +182,23 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
       })
       const json = await res.json()
       if (!res.ok) {
-        // Rollback
+        // Rollback optimistic update
         setCurrentStage(prevStage)
         setStageSetAt(prevSetAt)
-        toast.error('Не удалось сохранить стадию. Изменение не записано в базу.')
+        if (json?.transition_kind === 'forbidden') {
+          toast.error(json.error ?? 'Этот переход по воронке запрещён правилами.')
+        } else {
+          toast.error('Не удалось сохранить стадию. Изменение не записано в базу.')
+        }
       } else {
-        toast.success(`Стадия: ${STAGE_LABELS[stage]}`)
+        const kind = json?.transition_kind as string | undefined
+        if (kind === 'rollback') {
+          toast.success(`Откат стадии → ${STAGE_LABELS[stage]}`)
+        } else if (kind === 'reopen') {
+          toast.success(`Лид переоткрыт → ${STAGE_LABELS[stage]}`)
+        } else {
+          toast.success(`Стадия обновлена: ${STAGE_LABELS[stage]}`)
+        }
         onOutcomeSet?.(lead.id, stage)
       }
     } catch {

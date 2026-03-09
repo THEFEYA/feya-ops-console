@@ -14,6 +14,14 @@
 
 <!-- Добавляй новые записи сверху, самые свежие первыми -->
 
+## 2026-03-09 — Stage transition policy / contract
+
+- Change: Создан `lib/domain/stageTransitions.ts` — единый источник правил переходов между стадиями лида. Определены три группы стадий: decision (shortlisted/approved/rejected), progress chain (qualified→contacted→replied→meeting→proposal), terminal (won/lost). В `/api/actions/lead-outcome` POST добавлена проверка: читаем latest stage, вызываем `checkTransition(from, to)`, если переход запрещён — HTTP 400 с русскоязычной ошибкой. В `meta` каждой записи `lead_outcomes` теперь сохраняется `transition_kind`. UI в `LeadDetailPanel` обновлён: разные тосты для forward ("Стадия обновлена"), rollback ("Откат стадии"), reopen ("Лид переоткрыт"), forbidden ("Этот переход запрещён…"). Добавлен `docs/feya/06_SCHEMA_CONTRACT.md`.
+- Why: Без политики менеджер мог случайно нажать `won→contacted`, что логически бессмысленно и ломает аналитику воронки. Нужен явный контракт: что разрешено, что нет, и какого рода каждый переход. Rollback внутри воронки (meeting→contacted) — допустим; reopen из финала — только в proposal/meeting; decision-стадии — всегда свободны.
+- Risk: Минимальный. Блокируются только два сценария: won/lost → qualified/contacted/replied. Для них ошибка очевидна и объясняется. Все остальные переходы по-прежнему разрешены. Политика расширяемая — добавить новую стадию в нужную группу достаточно.
+- How to verify: В Inbox выбрать лид → поставить Сделка → попробовать нажать «Написали» → получить toast с ошибкой "Переход из Сделка разрешён только в КП или Встречу". Нажать «КП отправлено» → toast "Лид переоткрыт → КП отправлено". Нажать «Встреча» → toast "Откат стадии → Встреча".
+- Rollback: Удалить `lib/domain/stageTransitions.ts`, убрать `checkTransition` из route handler, вернуть прямой вызов `insertLeadStage` без transition check, вернуть единый toast `"Стадия: <label>"` в LeadDetailPanel.
+
 ## 2026-03-09 — Stage velocity + bottleneck analytics
 
 - Change: Добавлен DB view `v_stage_transitions` (каждый переход между стадиями = строка: from_stage, to_stage, hours_elapsed, source_slug). Новые JS-хелперы `computeVelocity()` (median/p75 времени per transition type) и `computeStuck()` (лиды, зависшие в текущей стадии > 72 ч). В аналитике новый блок "Скорость воронки": таблица переходов с Median/P75 часами и таблица зависших лидов по стадиям. Фильтрация по source_slug. Rollback-переходы помечены иконкой ↩.
