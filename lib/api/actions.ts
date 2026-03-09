@@ -30,7 +30,7 @@ export async function insertLeadStage(
   try {
     const { data: recent } = await sb
       .from('lead_outcomes')
-      .select('id, stage, created_at')
+      .select('outcome_id, stage, created_at')
       .eq('lead_id', leadId)
       .order('created_at', { ascending: false })
       .limit(1)
@@ -47,7 +47,7 @@ export async function insertLeadStage(
     // If dedup check fails, proceed with insert
   }
 
-  // Insert new stage row
+  // Plain INSERT — lead_outcomes is append-only, no unique constraint on lead_id
   try {
     const { data, error } = await sb
       .from('lead_outcomes')
@@ -60,23 +60,7 @@ export async function insertLeadStage(
       .select()
       .single()
 
-    if (error) {
-      // Fallback: try upsert if insert fails (e.g. unique constraint)
-      const { data: upserted, error: upErr } = await sb
-        .from('lead_outcomes')
-        .upsert(
-          {
-            lead_id: leadId,
-            stage,
-            meta: { ...meta, ...(note ? { note } : {}) },
-          },
-          { onConflict: 'lead_id' }
-        )
-        .select()
-        .single()
-      if (upErr) return { ok: false, error: upErr.message }
-      return { ok: true, data: upserted }
-    }
+    if (error) return { ok: false, error: error.message }
     return { ok: true, data }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
@@ -178,14 +162,12 @@ export async function callEdgeFunction(
   }
 }
 
-/** Set lead outcome — tries edge function first, falls back to direct upsert */
+/** Set lead outcome — tries edge function first, falls back to insertLeadStage */
 export async function setLeadOutcome(
   leadId: string | number,
   outcome: OutcomeType,
   meta: Record<string, unknown> = {}
 ): Promise<{ ok: boolean; data?: unknown; error?: string }> {
-  const sb = createAdminClient()
-
   // Try lead_outcome_action edge function
   const edgeResult = await callEdgeFunction('lead_outcome_action', {
     lead_id: leadId,
@@ -195,25 +177,6 @@ export async function setLeadOutcome(
 
   if (edgeResult.ok) return edgeResult
 
-  // Fallback: direct upsert into lead_outcomes table
-  try {
-    const { data, error } = await sb
-      .from('lead_outcomes')
-      .upsert(
-        {
-          lead_id: leadId,
-          stage: outcome,
-          meta,
-        },
-        { onConflict: 'lead_id' }
-      )
-      .select()
-      .single()
-
-    if (error) return { ok: false, error: error.message }
-    return { ok: true, data }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    return { ok: false, error: `Edge fn failed: ${edgeResult.error}; Upsert fallback failed: ${message}` }
-  }
+  // Fallback: plain append-only insert (no upsert — lead_outcomes has no unique constraint on lead_id)
+  return insertLeadStage(leadId, outcome as StageType, undefined, meta)
 }
