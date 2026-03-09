@@ -20,7 +20,8 @@ import { AiPanel } from '@/components/analytics/AiPanel'
 import { AnalyticsProvider, useAnalytics, ALL_KNOWN_CHART_DEFAULTS, REQUIRED_LAYOUT, type ChartConfig } from '@/lib/analytics/context'
 import { AnalyticsErrorBoundary } from '@/components/analytics/ErrorBoundary'
 import { buildApiUrl } from '@/lib/utils'
-import { BarChart3, RefreshCw, Sun, Moon, Zap, RotateCcw, Lock, Unlock } from 'lucide-react'
+import { BarChart3, RefreshCw, Sun, Moon, Zap, RotateCcw, Lock, Unlock, AlertTriangle } from 'lucide-react'
+import { STAGE_LABEL_RU } from '@/lib/domain/stage'
 
 const LS_KEY = 'feya_analytics_state'
 
@@ -416,6 +417,19 @@ function AnalyticsInner({ safeMode }: { safeMode: boolean }) {
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
 
+  // DB healthcheck — fires once on mount
+  const [dbWarning, setDbWarning] = useState<string[] | null>(null)
+  useEffect(() => {
+    fetch('/api/debug/db-health', { cache: 'no-store' })
+      .then((r) => r.ok ? r.json() : null)
+      .then((json) => {
+        if (json && !json.ok && Array.isArray(json.missing) && json.missing.length > 0) {
+          setDbWarning(json.missing as string[])
+        }
+      })
+      .catch(() => {}) // best-effort only
+  }, [])
+
   // Toast notification for cross-filter actions
   const [toast, setToast] = useState<string | null>(null)
   const showToast = useCallback((msg: string) => {
@@ -650,6 +664,17 @@ function AnalyticsInner({ safeMode }: { safeMode: boolean }) {
 
   return (
     <div className="space-y-4 animate-fade-in" data-theme={state.theme !== 'dark' ? state.theme : undefined}>
+      {/* DB schema warning — shown when healthcheck detects missing columns/views */}
+      {dbWarning && dbWarning.length > 0 && (
+        <div className="flex items-start gap-2 px-3 py-2 rounded bg-amber-500/10 border border-amber-500/30 text-xs text-amber-400">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+          <span>
+            Диагностика БД: отсутствует <span className="font-mono">{dbWarning.join(', ')}</span>.
+            Конверсия и стадии могут быть неполными.
+          </span>
+        </div>
+      )}
+
       {/* Safe-mode banner */}
       {safeMode && (
         <div className="flex items-center gap-2 px-3 py-1.5 rounded bg-amber-500/10 border border-amber-500/30 text-xs text-amber-400">
@@ -810,7 +835,7 @@ function AnalyticsInner({ safeMode }: { safeMode: boolean }) {
                       : 'border-border text-muted-foreground hover:text-foreground'
                   }`}
                 >
-                  {{ approved: 'Одобрено', shortlisted: 'Шортлист', rejected: 'Отклонено' }[s]}
+                  {STAGE_LABEL_RU[s]}
                 </button>
               ))}
             </div>

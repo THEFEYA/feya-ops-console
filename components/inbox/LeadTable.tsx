@@ -5,6 +5,7 @@ import { EmptyState } from '@/components/shared/EmptyState'
 import { Badge } from '@/components/ui/badge'
 import { formatRelative, warmthColor, warmthLabel, truncate, cn } from '@/lib/utils'
 import { Users } from 'lucide-react'
+import { stageLabel, stageVariant } from '@/lib/domain/stage'
 
 interface Props {
   leads: NormalisedLead[]
@@ -13,30 +14,7 @@ interface Props {
   outcomes: Record<string | number, string>
 }
 
-function outcomeVariant(o?: string): 'green' | 'cyan' | 'red' | 'outline' | undefined {
-  if (!o) return undefined
-  if (o === 'approved' || o === 'won') return 'green'
-  if (o === 'rejected' || o === 'lost') return 'red'
-  if (['shortlisted', 'qualified', 'contacted', 'replied', 'meeting', 'proposal'].includes(o)) return 'cyan'
-  return 'outline'
-}
-
-const STAGE_LABELS_RU: Record<string, string> = {
-  approved:    'Одобрен',
-  shortlisted: 'Шортлист',
-  rejected:    'Отклонён',
-  qualified:   'Квалифицирован',
-  contacted:   'Написали',
-  replied:     'Ответил',
-  meeting:     'Встреча',
-  proposal:    'КП',
-  won:         'Сделка',
-  lost:        'Провал',
-}
-
-function outcomeLabel(o?: string): string {
-  return STAGE_LABELS_RU[o ?? ''] ?? o ?? ''
-}
+// stageLabel / stageVariant imported from lib/domain/stage
 
 export function LeadTable({ leads, selectedId, onSelect, outcomes }: Props) {
   if (leads.length === 0) {
@@ -98,7 +76,7 @@ export function LeadTable({ leads, selectedId, onSelect, outcomes }: Props) {
                   </td>
                   <td className="px-3 py-2.5">
                     {outcome ? (
-                      <Badge variant={outcomeVariant(outcome)}>{outcomeLabel(outcome)}</Badge>
+                      <Badge variant={stageVariant(outcome)}>{stageLabel(outcome)}</Badge>
                     ) : (
                       <span className="text-muted-foreground/40">—</span>
                     )}
