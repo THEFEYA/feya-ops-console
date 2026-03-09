@@ -268,6 +268,14 @@ export async function getLeadAnalyticsRollup2(days = 90, dateFrom?: string, date
   return data ?? []
 }
 
+/** Raw stage transitions per lead: from_stage, to_stage, hours_elapsed, source_slug */
+export async function getStageTransitions() {
+  const sb = createAdminClient()
+  const { data, error } = await sb.from('v_stage_transitions').select('*').limit(20000)
+  if (error) console.error('[getStageTransitions]', error.message)
+  return data ?? []
+}
+
 /** Latest stage per lead (current_stage = last event by created_at) */
 export async function getLeadCurrentStage() {
   const sb = createAdminClient()

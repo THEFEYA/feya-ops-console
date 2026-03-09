@@ -14,6 +14,14 @@
 
 <!-- Добавляй новые записи сверху, самые свежие первыми -->
 
+## 2026-03-09 — Stage velocity + bottleneck analytics
+
+- Change: Добавлен DB view `v_stage_transitions` (каждый переход между стадиями = строка: from_stage, to_stage, hours_elapsed, source_slug). Новые JS-хелперы `computeVelocity()` (median/p75 времени per transition type) и `computeStuck()` (лиды, зависшие в текущей стадии > 72 ч). В аналитике новый блок "Скорость воронки": таблица переходов с Median/P75 часами и таблица зависших лидов по стадиям. Фильтрация по source_slug. Rollback-переходы помечены иконкой ↩.
+- Why: Append-only история стадий позволяет видеть скорость движения лида. Bottleneck-анализ: какие переходы долгие → куда смотреть первым делом. Stuck analysis: какие лиды залипли → откуда начинать follow-up. Без этой аналитики история стадий бесполезна для операционных решений.
+- Risk: Данных сейчас мало (несколько десятков тестовых лидов). Для переходов с < 2 наблюдений median не показывается (помечается "мало"). По мере накопления реальных данных аналитика станет точнее.
+- How to verify: Проставить стадии нескольким лидам с паузами. Аналитика → "Скорость воронки": переходы в таблице, median часов для переходов с ≥ 2 наблюдениями. Лиды, зависшие в стадии > 72 ч, появятся в правой таблице.
+- Rollback: DROP VIEW v_stage_transitions; убрать velocity-блок из analytics/page.tsx.
+
 ## 2026-03-09 — Разделить current stage и ever-reached stage в аналитике
 
 - Change: Созданы две новые DB views: `v_lead_current_stage` (latest stage by created_at per lead) и `v_lead_ever_stage` (max-ever stage by STAGE_ORDER per lead, + rollback_count). В блок Конверсия добавлен переключатель "Текущая стадия / Дошли до стадии". Inbox и правая карточка продолжают использовать latest-by-created_at (current stage), без изменений.

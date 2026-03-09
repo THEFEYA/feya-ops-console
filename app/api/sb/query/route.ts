@@ -18,6 +18,7 @@ import {
   getFunnelBySourceEntity,
   getLeadCurrentStage,
   getLeadEverStage,
+  getStageTransitions,
   type InboxTab,
 } from '@/lib/api/queries'
 
@@ -46,6 +47,7 @@ const ALLOWED_QUERIES = [
   'v_funnel_by_source_entity',
   'v_lead_current_stage',
   'v_lead_ever_stage',
+  'v_stage_transitions',
 ] as const
 
 type QueryName = (typeof ALLOWED_QUERIES)[number]
@@ -185,6 +187,10 @@ export async function GET(req: NextRequest) {
 
       case 'v_lead_ever_stage':
         data = await getLeadEverStage()
+        break
+
+      case 'v_stage_transitions':
+        data = await getStageTransitions()
         break
 
       default:
