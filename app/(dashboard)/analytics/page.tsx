@@ -215,6 +215,111 @@ function aggregateFunnelByDay(rows: FunnelRow[]): FunnelDayPoint[] {
     }))
 }
 
+// ─── Stage-mode helpers (current vs ever-reached) ─────────────────────────────
+
+const PIPELINE_STAGES = [
+  'qualified', 'contacted', 'replied', 'meeting', 'proposal', 'won', 'lost',
+] as const
+type PipelineStage = (typeof PIPELINE_STAGES)[number]
+const PIPELINE_STAGE_LABELS: Record<PipelineStage, string> = {
+  qualified: 'Квалиф.', contacted: 'Написали', replied: 'Ответил',
+  meeting: 'Встреча', proposal: 'КП', won: 'Сделка', lost: 'Провал',
+}
+
+interface StageModeSourceRow {
+  source: string
+  total: number
+  qualified: number; contacted: number; replied: number
+  meeting: number; proposal: number; won: number; lost: number
+}
+
+function aggregateStageModeBySource(
+  rows: Record<string, unknown>[],
+  stageField: string
+): StageModeSourceRow[] {
+  const bySource: Record<string, StageModeSourceRow> = {}
+  for (const row of rows) {
+    const src = String(row.source_slug ?? '').trim() || '(без источника)'
+    if (!bySource[src]) {
+      bySource[src] = { source: src, total: 0, qualified: 0, contacted: 0, replied: 0, meeting: 0, proposal: 0, won: 0, lost: 0 }
+    }
+    bySource[src].total++
+    const stage = String(row[stageField] ?? '').trim()
+    if (stage in bySource[src]) (bySource[src] as unknown as Record<string, number>)[stage]++
+  }
+  return Object.values(bySource).filter((r) => r.total > 0).sort((a, b) => b.total - a.total).slice(0, 12)
+}
+
+// ─── Velocity helpers ─────────────────────────────────────────────────────────
+
+const ALL_STAGE_LABELS_RU: Record<string, string> = {
+  shortlisted: 'Шортлист', approved: 'Одобрен', rejected: 'Отклонён',
+  qualified: 'Квалиф.', contacted: 'Написали', replied: 'Ответил',
+  meeting: 'Встреча', proposal: 'КП', won: 'Сделка', lost: 'Провал',
+}
+
+const STUCK_THRESHOLD_H = 72
+
+function pct75(nums: number[]): number {
+  if (nums.length === 0) return 0
+  const s = [...nums].sort((a, b) => a - b)
+  const idx = 0.75 * (s.length - 1)
+  const lo = Math.floor(idx); const hi = Math.ceil(idx)
+  return s[lo] + (s[hi] !== undefined ? (s[hi] - s[lo]) * (idx - lo) : 0)
+}
+
+function medianOf(nums: number[]): number {
+  if (nums.length === 0) return 0
+  const s = [...nums].sort((a, b) => a - b)
+  const mid = Math.floor(s.length / 2)
+  return s.length % 2 === 0 ? (s[mid - 1] + s[mid]) / 2 : s[mid]
+}
+
+const VELOCITY_STAGE_ORDER = [
+  'qualified', 'contacted', 'replied', 'meeting', 'proposal', 'won', 'lost',
+  'shortlisted', 'approved', 'rejected',
+]
+
+interface VelocityRow { from_stage: string; to_stage: string; count: number; median_h: number; p75_h: number }
+
+function computeVelocity(rows: Record<string, unknown>[], src: string): VelocityRow[] {
+  const filtered = src ? rows.filter((r) => r.source_slug === src) : rows
+  const groups: Record<string, number[]> = {}
+  for (const r of filtered) {
+    const h = Number(r.hours_elapsed)
+    if (isNaN(h) || h < 0) continue
+    const key = `${r.from_stage}__${r.to_stage}`
+    ;(groups[key] ??= []).push(h)
+  }
+  return Object.entries(groups)
+    .map(([k, hs]) => {
+      const [from_stage, to_stage] = k.split('__')
+      return { from_stage, to_stage, count: hs.length, median_h: Math.round(medianOf(hs) * 10) / 10, p75_h: Math.round(pct75(hs) * 10) / 10 }
+    })
+    .sort((a, b) => {
+      const ai = VELOCITY_STAGE_ORDER.indexOf(a.from_stage)
+      const bi = VELOCITY_STAGE_ORDER.indexOf(b.from_stage)
+      if (ai !== bi) return ai - bi
+      return VELOCITY_STAGE_ORDER.indexOf(a.to_stage) - VELOCITY_STAGE_ORDER.indexOf(b.to_stage)
+    })
+}
+
+interface StuckRow { stage: string; count: number; avg_h: number }
+
+function computeStuck(currentRows: Record<string, unknown>[], src: string, thresholdH = STUCK_THRESHOLD_H): StuckRow[] {
+  const now = Date.now()
+  const filtered = src ? currentRows.filter((r) => r.source_slug === src) : currentRows
+  const groups: Record<string, number[]> = {}
+  for (const r of filtered) {
+    const h = (now - new Date(r.stage_set_at as string).getTime()) / 3_600_000
+    const stage = r.current_stage as string
+    if (h >= thresholdH && stage) (groups[stage] ??= []).push(h)
+  }
+  return Object.entries(groups)
+    .map(([stage, hrs]) => ({ stage, count: hrs.length, avg_h: Math.round(hrs.reduce((a, b) => a + b, 0) / hrs.length) }))
+    .sort((a, b) => VELOCITY_STAGE_ORDER.indexOf(a.stage) - VELOCITY_STAGE_ORDER.indexOf(b.stage))
+}
+
 // ─── Conversion helpers (fallback when funnel views are empty) ─────────────────
 
 function conversionBy(
@@ -475,6 +580,15 @@ function AnalyticsInner({ safeMode }: { safeMode: boolean }) {
     [dispatch, filtersLocked, showToast]
   )
 
+  // Stage-mode toggle: current (latest event) vs ever (max-ever stage reached)
+  const [stageMode, setStageMode] = useState<'current' | 'ever'>('current')
+  const [currentStageRows, setCurrentStageRows] = useState<Record<string, unknown>[]>([])
+  const [everStageRows, setEverStageRows] = useState<Record<string, unknown>[]>([])
+
+  // Velocity analytics state
+  const [transitionRows, setTransitionRows] = useState<Record<string, unknown>[]>([])
+  const [velocitySrcFilter, setVelocitySrcFilter] = useState('')
+
   // Local focus stage for conversion block (does NOT add to global filters)
   const [focusStage, setFocusStage] = useState<'approved' | 'shortlisted' | 'rejected' | null>(null)
 
@@ -502,6 +616,48 @@ function AnalyticsInner({ safeMode }: { safeMode: boolean }) {
 
   const funnelBySource = useMemo(() => aggregateFunnelBySource(funnelFilteredRows), [funnelFilteredRows])
   const funnelByDay    = useMemo(() => aggregateFunnelByDay(funnelFilteredRows),    [funnelFilteredRows])
+
+  // Velocity analytics memos
+  const velocitySources = useMemo(
+    () => [...new Set(transitionRows.map((r) => String(r.source_slug ?? '')).filter(Boolean))].sort(),
+    [transitionRows]
+  )
+  const velocityRows = useMemo(
+    () => computeVelocity(transitionRows, velocitySrcFilter),
+    [transitionRows, velocitySrcFilter]
+  )
+  const stuckRows = useMemo(
+    () => computeStuck(currentStageRows, velocitySrcFilter),
+    [currentStageRows, velocitySrcFilter]
+  )
+
+  // Stage-mode: aggregate by source using the appropriate view
+  const stageModeBySource = useMemo(
+    () => aggregateStageModeBySource(
+      stageMode === 'current' ? currentStageRows : everStageRows,
+      stageMode === 'current' ? 'current_stage' : 'ever_stage'
+    ),
+    [stageMode, currentStageRows, everStageRows]
+  )
+
+  // Fetch stage-mode + velocity views once on mount (full history, no date filter)
+  useEffect(() => {
+    let cancelled = false
+    async function loadStageViews() {
+      try {
+        const [curRes, everRes, trRes] = await Promise.all([
+          fetch(buildApiUrl('/api/sb/query', { name: 'v_lead_current_stage' }),  { cache: 'no-store' }),
+          fetch(buildApiUrl('/api/sb/query', { name: 'v_lead_ever_stage' }),     { cache: 'no-store' }),
+          fetch(buildApiUrl('/api/sb/query', { name: 'v_stage_transitions' }),   { cache: 'no-store' }),
+        ])
+        if (curRes.ok)  { const j = await curRes.json();  if (!cancelled) setCurrentStageRows(j.data ?? []) }
+        if (everRes.ok) { const j = await everRes.json(); if (!cancelled) setEverStageRows(j.data ?? []) }
+        if (trRes.ok)   { const j = await trRes.json();   if (!cancelled) setTransitionRows(j.data ?? []) }
+      } catch { /* best-effort, does not block main render */ }
+    }
+    loadStageViews()
+    return () => { cancelled = true }
+  }, [])
 
   // Sync period from context dateRange preset
   useEffect(() => {
@@ -950,6 +1106,79 @@ function AnalyticsInner({ safeMode }: { safeMode: boolean }) {
             </div>
           )}
 
+          {/* ── Stage-mode block: current vs ever-reached ─────────────────── */}
+          {(currentStageRows.length > 0 || everStageRows.length > 0) && (
+            <div className="border-t border-border/40 px-4 pb-4 pt-3 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs font-medium">Стадии лидов</span>
+                  <span className="text-[10px] text-muted-foreground/70">
+                    {stageMode === 'current'
+                      ? 'Текущая стадия — последняя запись в истории'
+                      : 'Дошли до стадии — лид когда-либо достигал этой стадии'}
+                  </span>
+                </div>
+                <div className="flex rounded border border-border overflow-hidden text-[10px] shrink-0">
+                  {(['current', 'ever'] as const).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setStageMode(m)}
+                      className={`px-2 py-1 transition-colors ${
+                        stageMode === m
+                          ? 'bg-neon-cyan/15 text-neon-cyan border-neon-cyan/30'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      {m === 'current' ? 'Текущая стадия' : 'Дошли до стадии'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {stageModeBySource.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[11px]">
+                    <thead>
+                      <tr className="text-muted-foreground border-b border-border/40">
+                        <th className="text-left py-1 pr-3 font-medium w-36">Источник</th>
+                        <th className="text-right py-1 px-1.5 font-medium">Всего</th>
+                        {PIPELINE_STAGES.map((s) => (
+                          <th key={s} className="text-right py-1 px-1.5 font-medium">{PIPELINE_STAGE_LABELS[s]}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stageModeBySource.map((r) => (
+                        <tr key={r.source} className="border-b border-border/20 hover:bg-secondary/20 transition-colors">
+                          <td className="py-1.5 pr-3">
+                            <button
+                              onClick={() => handleCrossFilter('source_slug', r.source)}
+                              className="text-foreground/80 hover:text-neon-cyan transition-colors text-left truncate max-w-[130px] block"
+                            >
+                              {r.source}
+                            </button>
+                          </td>
+                          <td className="text-right py-1.5 px-1.5 font-mono text-muted-foreground">{r.total}</td>
+                          {PIPELINE_STAGES.map((s) => (
+                            <td key={s} className={`text-right py-1.5 px-1.5 font-mono ${
+                              s === 'won'  ? 'text-emerald-400' :
+                              s === 'lost' ? 'text-red-400/70'  :
+                              (r as unknown as Record<string, number>)[s] > 0 ? 'text-neon-cyan/80' : 'text-muted-foreground/30'
+                            }`}>
+                              {(r as unknown as Record<string, number>)[s] || '—'}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground/60 text-center py-2">Нет данных по стадиям лидов</p>
+              )}
+            </div>
+          )}
+
           {/* Fallback: client-side computation when funnel view is empty */}
           {funnelRows.length === 0 && (convBySource.length > 0 || convByEvent.length > 0) && (
             <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -999,6 +1228,110 @@ function AnalyticsInner({ safeMode }: { safeMode: boolean }) {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Velocity / Bottleneck block ───────────────────────────────────── */}
+      {!safeMode && (transitionRows.length > 0 || currentStageRows.length > 0) && (
+        <div className="rounded-lg border border-border bg-card/50 overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/60 bg-secondary/30">
+            <div>
+              <span className="text-sm font-medium">Скорость воронки</span>
+              <span className="text-[10px] text-muted-foreground/60 ml-2">переходы и узкие места</span>
+            </div>
+            {velocitySources.length > 0 && (
+              <select
+                value={velocitySrcFilter}
+                onChange={(e) => setVelocitySrcFilter(e.target.value)}
+                className="text-[10px] bg-secondary border border-border rounded px-2 py-1 text-foreground/80"
+              >
+                <option value="">Все источники</option>
+                {velocitySources.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            )}
+          </div>
+
+          <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* ── Transition velocity table ── */}
+            <div>
+              <p className="text-xs font-medium text-muted-foreground mb-2">Переходы между стадиями</p>
+              {velocityRows.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[11px]">
+                    <thead>
+                      <tr className="text-muted-foreground border-b border-border/40">
+                        <th className="text-left py-1 pr-3 font-medium">Переход</th>
+                        <th className="text-right py-1 px-2 font-medium">Лидов</th>
+                        <th className="text-right py-1 px-2 font-medium">Median ч.</th>
+                        <th className="text-right py-1 px-2 font-medium">P75 ч.</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {velocityRows.map((r) => {
+                        const isForward = VELOCITY_STAGE_ORDER.indexOf(r.to_stage) > VELOCITY_STAGE_ORDER.indexOf(r.from_stage)
+                        const enoughData = r.count >= 2
+                        return (
+                          <tr key={`${r.from_stage}__${r.to_stage}`} className="border-b border-border/20 hover:bg-secondary/20 transition-colors">
+                            <td className="py-1.5 pr-3 font-mono text-[10px]">
+                              <span className="text-muted-foreground/80">{ALL_STAGE_LABELS_RU[r.from_stage] ?? r.from_stage}</span>
+                              <span className={`mx-1 ${isForward ? 'text-neon-cyan' : 'text-amber-400'}`}>→</span>
+                              <span className="text-foreground/90">{ALL_STAGE_LABELS_RU[r.to_stage] ?? r.to_stage}</span>
+                              {!isForward && <span className="ml-1 text-[9px] text-amber-400/70">↩</span>}
+                            </td>
+                            <td className="text-right py-1.5 px-2 font-mono text-muted-foreground">{r.count}</td>
+                            <td className="text-right py-1.5 px-2 font-mono text-neon-cyan">
+                              {enoughData ? `${r.median_h}` : <span className="text-muted-foreground/40 text-[9px]">мало</span>}
+                            </td>
+                            <td className="text-right py-1.5 px-2 font-mono text-neon-cyan/60">
+                              {enoughData ? `${r.p75_h}` : <span className="text-muted-foreground/40 text-[9px]">—</span>}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground/60 text-center py-4">Недостаточно данных переходов</p>
+              )}
+            </div>
+
+            {/* ── Stuck leads table ── */}
+            <div>
+              <p className="text-xs font-medium text-muted-foreground mb-2">
+                Зависшие лиды
+                <span className="ml-1 text-muted-foreground/50 font-normal">(текущая стадия &gt; {STUCK_THRESHOLD_H} ч.)</span>
+              </p>
+              {stuckRows.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[11px]">
+                    <thead>
+                      <tr className="text-muted-foreground border-b border-border/40">
+                        <th className="text-left py-1 pr-3 font-medium">Стадия</th>
+                        <th className="text-right py-1 px-2 font-medium">Лидов</th>
+                        <th className="text-right py-1 px-2 font-medium">Avg дней</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stuckRows.map((r) => (
+                        <tr key={r.stage} className="border-b border-border/20 hover:bg-secondary/20 transition-colors">
+                          <td className="py-1.5 pr-3 text-foreground/80">{ALL_STAGE_LABELS_RU[r.stage] ?? r.stage}</td>
+                          <td className="text-right py-1.5 px-2 font-mono text-amber-400">{r.count}</td>
+                          <td className="text-right py-1.5 px-2 font-mono text-amber-400/70">
+                            {(r.avg_h / 24).toFixed(1)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground/60 text-center py-4">
+                  Нет лидов, зависших более {STUCK_THRESHOLD_H} ч.
+                </p>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>
