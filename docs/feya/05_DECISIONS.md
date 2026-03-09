@@ -14,6 +14,14 @@
 
 <!-- Добавляй новые записи сверху, самые свежие первыми -->
 
+## 2026-03-09 — Разделить current stage и ever-reached stage в аналитике
+
+- Change: Созданы две новые DB views: `v_lead_current_stage` (latest stage by created_at per lead) и `v_lead_ever_stage` (max-ever stage by STAGE_ORDER per lead, + rollback_count). В блок Конверсия добавлен переключатель "Текущая стадия / Дошли до стадии". Inbox и правая карточка продолжают использовать latest-by-created_at (current stage), без изменений.
+- Why: После удаления unique index на (lead_id, stage) возникли две различные истины, которые нельзя смешивать: (1) что сейчас — последняя запись по created_at; (2) чего когда-либо достигал лид — максимальный stage_order по всей истории. Смешение даёт ложную аналитику: лид откатился с Сделки на Написали → в "текущей" он Написали, но в "дошли до" он Сделка. Обе метрики нужны для разных управленческих решений.
+- Risk: Новые views читаются best-effort (не блокируют загрузку страницы). rollback_count вычисляется через LAG() window function — корректно для append-only модели.
+- How to verify: В Inbox: лид → Квалифицирован → Написали → Встреча → откат на Написали. Аналитика → Конверсия → "Текущая стадия": лид считается в Написали. Переключить на "Дошли до стадии": тот же лид считается в Встреча.
+- Rollback: DROP VIEW v_lead_current_stage; DROP VIEW v_lead_ever_stage; убрать stage-mode блок из analytics/page.tsx.
+
 ## 2026-03-08 — Allow stage rollback: drop lead_outcomes_lead_stage_uniq index
 
 - Change: Удалили уникальный индекс `lead_outcomes_lead_stage_uniq ON (lead_id, stage)` из БД (миграция). Исправили dedup-запрос в `insertLeadStage` — он обращался к несуществующей колонке `id` (реальное имя PK — `outcome_id`), из-за чего dedup всегда молча падал.

@@ -214,6 +214,41 @@ function aggregateFunnelByDay(rows: FunnelRow[]): FunnelDayPoint[] {
     }))
 }
 
+// ─── Stage-mode helpers (current vs ever-reached) ─────────────────────────────
+
+const PIPELINE_STAGES = [
+  'qualified', 'contacted', 'replied', 'meeting', 'proposal', 'won', 'lost',
+] as const
+type PipelineStage = (typeof PIPELINE_STAGES)[number]
+const PIPELINE_STAGE_LABELS: Record<PipelineStage, string> = {
+  qualified: 'Квалиф.', contacted: 'Написали', replied: 'Ответил',
+  meeting: 'Встреча', proposal: 'КП', won: 'Сделка', lost: 'Провал',
+}
+
+interface StageModeSourceRow {
+  source: string
+  total: number
+  qualified: number; contacted: number; replied: number
+  meeting: number; proposal: number; won: number; lost: number
+}
+
+function aggregateStageModeBySource(
+  rows: Record<string, unknown>[],
+  stageField: string
+): StageModeSourceRow[] {
+  const bySource: Record<string, StageModeSourceRow> = {}
+  for (const row of rows) {
+    const src = String(row.source_slug ?? '').trim() || '(без источника)'
+    if (!bySource[src]) {
+      bySource[src] = { source: src, total: 0, qualified: 0, contacted: 0, replied: 0, meeting: 0, proposal: 0, won: 0, lost: 0 }
+    }
+    bySource[src].total++
+    const stage = String(row[stageField] ?? '').trim()
+    if (stage in bySource[src]) (bySource[src] as unknown as Record<string, number>)[stage]++
+  }
+  return Object.values(bySource).filter((r) => r.total > 0).sort((a, b) => b.total - a.total).slice(0, 12)
+}
+
 // ─── Conversion helpers (fallback when funnel views are empty) ─────────────────
 
 function conversionBy(
@@ -461,6 +496,11 @@ function AnalyticsInner({ safeMode }: { safeMode: boolean }) {
     [dispatch, filtersLocked, showToast]
   )
 
+  // Stage-mode toggle for conversion block: current (latest event) vs ever (max-ever stage)
+  const [stageMode, setStageMode] = useState<'current' | 'ever'>('current')
+  const [currentStageRows, setCurrentStageRows] = useState<Record<string, unknown>[]>([])
+  const [everStageRows, setEverStageRows] = useState<Record<string, unknown>[]>([])
+
   // Local focus stage for conversion block (does NOT add to global filters)
   const [focusStage, setFocusStage] = useState<'approved' | 'shortlisted' | 'rejected' | null>(null)
 
@@ -488,6 +528,32 @@ function AnalyticsInner({ safeMode }: { safeMode: boolean }) {
 
   const funnelBySource = useMemo(() => aggregateFunnelBySource(funnelFilteredRows), [funnelFilteredRows])
   const funnelByDay    = useMemo(() => aggregateFunnelByDay(funnelFilteredRows),    [funnelFilteredRows])
+
+  // Stage-mode: aggregate by source using the appropriate view
+  const stageModeBySource = useMemo(
+    () => aggregateStageModeBySource(
+      stageMode === 'current' ? currentStageRows : everStageRows,
+      stageMode === 'current' ? 'current_stage' : 'ever_stage'
+    ),
+    [stageMode, currentStageRows, everStageRows]
+  )
+
+  // Fetch stage-mode views once on mount (full history, no date filter)
+  useEffect(() => {
+    let cancelled = false
+    async function loadStageViews() {
+      try {
+        const [curRes, everRes] = await Promise.all([
+          fetch(buildApiUrl('/api/sb/query', { name: 'v_lead_current_stage' }), { cache: 'no-store' }),
+          fetch(buildApiUrl('/api/sb/query', { name: 'v_lead_ever_stage' }),    { cache: 'no-store' }),
+        ])
+        if (curRes.ok)  { const j = await curRes.json();  if (!cancelled) setCurrentStageRows(j.data ?? []) }
+        if (everRes.ok) { const j = await everRes.json(); if (!cancelled) setEverStageRows(j.data ?? []) }
+      } catch { /* best-effort */ }
+    }
+    loadStageViews()
+    return () => { cancelled = true }
+  }, [])
 
   // Sync period from context dateRange preset
   useEffect(() => {
@@ -921,6 +987,81 @@ function AnalyticsInner({ safeMode }: { safeMode: boolean }) {
                     </div>
                   )}
                 </>
+              )}
+            </div>
+          )}
+
+          {/* ── Stage-mode block: current vs ever-reached ─────────────────── */}
+          {(currentStageRows.length > 0 || everStageRows.length > 0) && (
+            <div className="border-t border-border/40 px-4 pb-4 pt-3 space-y-3">
+              {/* Toggle + description */}
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs font-medium">Стадии лидов</span>
+                  <span className="text-[10px] text-muted-foreground/70">
+                    {stageMode === 'current'
+                      ? 'Текущая стадия — последняя запись в истории'
+                      : 'Дошли до стадии — лид когда-либо достигал этой стадии'}
+                  </span>
+                </div>
+                <div className="flex rounded border border-border overflow-hidden text-[10px] shrink-0">
+                  {(['current', 'ever'] as const).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setStageMode(m)}
+                      className={`px-2 py-1 transition-colors ${
+                        stageMode === m
+                          ? 'bg-neon-cyan/15 text-neon-cyan border-neon-cyan/30'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      {m === 'current' ? 'Текущая стадия' : 'Дошли до стадии'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Per-source breakdown by pipeline stage */}
+              {stageModeBySource.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[11px]">
+                    <thead>
+                      <tr className="text-muted-foreground border-b border-border/40">
+                        <th className="text-left py-1 pr-3 font-medium w-36">Источник</th>
+                        <th className="text-right py-1 px-1.5 font-medium">Всего</th>
+                        {PIPELINE_STAGES.map((s) => (
+                          <th key={s} className="text-right py-1 px-1.5 font-medium">{PIPELINE_STAGE_LABELS[s]}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stageModeBySource.map((r) => (
+                        <tr key={r.source} className="border-b border-border/20 hover:bg-secondary/20 transition-colors">
+                          <td className="py-1.5 pr-3">
+                            <button
+                              onClick={() => handleCrossFilter('source_slug', r.source)}
+                              className="text-foreground/80 hover:text-neon-cyan transition-colors text-left truncate max-w-[130px] block"
+                            >
+                              {r.source}
+                            </button>
+                          </td>
+                          <td className="text-right py-1.5 px-1.5 font-mono text-muted-foreground">{r.total}</td>
+                          {PIPELINE_STAGES.map((s) => (
+                            <td key={s} className={`text-right py-1.5 px-1.5 font-mono ${
+                              s === 'won'  ? 'text-emerald-400' :
+                              s === 'lost' ? 'text-red-400/70'  :
+                              (r as unknown as Record<string, number>)[s] > 0 ? 'text-neon-cyan/80' : 'text-muted-foreground/30'
+                            }`}>
+                              {(r as unknown as Record<string, number>)[s] || '—'}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground/60 text-center py-2">Нет данных по стадиям лидов</p>
               )}
             </div>
           )}

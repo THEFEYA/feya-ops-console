@@ -268,6 +268,22 @@ export async function getLeadAnalyticsRollup2(days = 90, dateFrom?: string, date
   return data ?? []
 }
 
+/** Latest stage per lead (current_stage = last event by created_at) */
+export async function getLeadCurrentStage() {
+  const sb = createAdminClient()
+  const { data, error } = await sb.from('v_lead_current_stage').select('*').limit(10000)
+  if (error) console.error('[getLeadCurrentStage]', error.message)
+  return data ?? []
+}
+
+/** Max-ever stage per lead (ever_stage = highest stage order reached) + rollback_count */
+export async function getLeadEverStage() {
+  const sb = createAdminClient()
+  const { data, error } = await sb.from('v_lead_ever_stage').select('*').limit(10000)
+  if (error) console.error('[getLeadEverStage]', error.message)
+  return data ?? []
+}
+
 export async function getSchemaKeys() {
   const sb = createAdminClient()
   const sources: Record<string, string[]> = {}

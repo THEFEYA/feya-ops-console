@@ -16,6 +16,8 @@ import {
   getSchemaKeys,
   getSourceFunnelDaily,
   getFunnelBySourceEntity,
+  getLeadCurrentStage,
+  getLeadEverStage,
   type InboxTab,
 } from '@/lib/api/queries'
 
@@ -42,6 +44,8 @@ const ALLOWED_QUERIES = [
   'schema_keys',
   'v_source_funnel_daily',
   'v_funnel_by_source_entity',
+  'v_lead_current_stage',
+  'v_lead_ever_stage',
 ] as const
 
 type QueryName = (typeof ALLOWED_QUERIES)[number]
@@ -174,6 +178,14 @@ export async function GET(req: NextRequest) {
         data = await getFunnelBySourceEntity(fbDays)
         break
       }
+
+      case 'v_lead_current_stage':
+        data = await getLeadCurrentStage()
+        break
+
+      case 'v_lead_ever_stage':
+        data = await getLeadEverStage()
+        break
 
       default:
         return Response.json({ error: 'Not implemented' }, { status: 400 })
