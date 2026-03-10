@@ -32,6 +32,14 @@ Notes:
 - How to verify: `/queue` — отображаются бакеты; фильтры работают; клик на элемент открывает LeadDetailPanel справа; можно добавить действие из панели и оно появится в очереди после обновления.
 - Rollback: Удалить `app/(dashboard)/queue/`, `app/api/actions/queue/route.ts`, `lib/api/leadActions.ts`, `app/api/actions/lead-action/route.ts`, убрать пункт «Очередь» из Sidebar, откатить изменения LeadDetailPanel.
 
+## 2026-03-10 — Source health analytics: «Здоровье источников» + «Что делать сейчас»
+
+- Change: Новый аналитический блок в `/analytics` — таблица «Здоровье источников» (source_slug × метрики: current stage counts, ever-reached counts, reject/win/rollback rate, action label) + блок «Что делать сейчас» (до 5 сигналов: высокий reject rate, застрявшие лиды, лучший Встреча→КП переход, лучший КП→Сделка, кандидат на масштабирование). Логика action labels: Scale (win_rate ≥ 5% + ever_proposal ≥ 2 + ever_won ≥ 1), Review (reject_rate ≥ 40% + total ≥ 5), Stuck (cur_qualified ≥ 3 + ever_meeting == 0 + total ≥ 5), Watch (по умолчанию). Добавлены `getLeadCurrentStage`, `getLeadEverStage`, `getStageTransitions` в queries.ts и `/api/sb/query`.
+- Why: Analytics был пассивным. Нужен операционный сигнал — что конкретно делать сейчас с каждым источником, без ручного анализа таблиц.
+- Risk: Минимальный. Блок рендерится только если views вернули данные. Все расчёты детерминированы, без AI. Если views отсутствуют в runtime — блок просто не появится.
+- How to verify: `/analytics` → блок «Здоровье источников» появляется ниже всех блоков. У источника с ≥5 лидами и ≥40% rejected → action = «Разобраться». У источника с won ≥ 1 и win_rate ≥ 5% → «Масштаб». Таблица «Что делать сейчас» показывает не более 5 сигналов.
+- Rollback: Удалить `computeSourceHealth`, `deriveActionSignals`, `deriveAction`, `pct`, `SourceHealthRow`, `ActionSignal` из page.tsx; удалить sourceHealth state/memo/useEffect; удалить блок «Здоровье источников» из JSX; удалить три query-функции из queries.ts и route.ts.
+
 ## 2026-03-09 — Analytics action layer: stage history views + velocity analytics
 
 - Change: Добавлены три query-функции (`getLeadCurrentStage`, `getLeadEverStage`, `getStageTransitions`), зарегистрированы в `/api/sb/query` (три новых allowed names). В `/analytics` добавлены два блока: «Стадии лидов» (toggle текущая/ever-reached + таблица по источникам) и «Скорость воронки» (таблица переходов с median/p75 + таблица зависших лидов >72 ч.). Исправлен баг в `insertLeadStage`: dedup-запрос использовал колонку `id` вместо `outcome_id`. Удалён upsert-fallback в `insertLeadStage` и `setLeadOutcome` (таблица append-only, нет unique constraint на lead_id).
