@@ -1246,7 +1246,7 @@ function AnalyticsInner({ safeMode }: { safeMode: boolean }) {
         <div className="rounded-lg border border-border bg-card/50 overflow-hidden">
           <div className="px-4 py-2.5 border-b border-border/60 bg-secondary/30">
             <span className="text-sm font-medium">Здоровье источников</span>
-            <span className="text-[10px] text-muted-foreground/60 ml-2">текущие стадии · ever-reached · действие</span>
+            <span className="text-[10px] text-muted-foreground/60 ml-2">текущие стадии · доходили до стадии · действие</span>
           </div>
 
           {/* "Что делать сейчас" signals */}
@@ -1278,12 +1278,12 @@ function AnalyticsInner({ safeMode }: { safeMode: boolean }) {
                   <th className="text-right py-1 px-1.5 font-medium">Сделка</th>
                   <th className="text-right py-1 px-1.5 font-medium">Провал</th>
                   <th className="text-right py-1 px-1.5 font-medium">Откл.</th>
-                  <th className="text-right py-1 px-1.5 font-medium">⌃Встреча</th>
-                  <th className="text-right py-1 px-1.5 font-medium">⌃КП</th>
-                  <th className="text-right py-1 px-1.5 font-medium">⌃Сделка</th>
-                  <th className="text-right py-1 px-1.5 font-medium">Reject%</th>
-                  <th className="text-right py-1 px-1.5 font-medium">Win%</th>
-                  <th className="text-right py-1 px-1.5 font-medium">Rollback%</th>
+                  <th className="text-right py-1 px-1.5 font-medium">↑Встреча</th>
+                  <th className="text-right py-1 px-1.5 font-medium">↑КП</th>
+                  <th className="text-right py-1 px-1.5 font-medium">↑Сделка</th>
+                  <th className="text-right py-1 px-1.5 font-medium">Откл.%</th>
+                  <th className="text-right py-1 px-1.5 font-medium">Сделка%</th>
+                  <th className="text-right py-1 px-1.5 font-medium">Откат%</th>
                   <th className="text-left py-1 pl-2 font-medium">Действие</th>
                 </tr>
               </thead>
