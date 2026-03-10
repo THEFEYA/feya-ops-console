@@ -5,6 +5,7 @@
 - [x] Schema drift guardrails (stage/outcome/updated_at)
 - [x] Stable funnel views
 - [x] Batch fetching to avoid N+1
+- [x] Observability control layer: unified run history + function registry + system status block
 
 ## Phase B — Operational visibility ✓
 

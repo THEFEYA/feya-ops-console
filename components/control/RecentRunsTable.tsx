@@ -5,19 +5,35 @@ import { EmptyState } from '@/components/shared/EmptyState'
 import { LoadingSpinner } from '@/components/shared/LoadingSpinner'
 import { StatusDot } from '@/components/shared/StatusDot'
 import { Button } from '@/components/ui/button'
-import { type NormalisedRun, normaliseRun } from '@/lib/field-resolver'
+import { normaliseRun, type NormalisedRun } from '@/lib/field-resolver'
 import { formatDateTime, formatRelative, buildApiUrl, truncate } from '@/lib/utils'
 import { Copy, RefreshCw, Activity } from 'lucide-react'
 import { toast } from 'sonner'
 
 type AnyRecord = Record<string, unknown>
 
+interface RunUnified {
+  id:              string
+  functionId:      string
+  functionLabelRu: string
+  status:          string | null
+  statusRu:        string
+  statusVariant:   'ok' | 'error' | 'running' | 'warn' | 'idle'
+  created_at:      string | null
+  error_text:      string | null
+  errorRu:         string | null
+  count_in:        number | null
+  count_out:       number | null
+  source_label:    string | null
+  source_table:    string
+}
+
 interface Props {
   refreshTrigger?: number
 }
 
 export function RecentRunsTable({ refreshTrigger }: Props) {
-  const [runs, setRuns] = useState<NormalisedRun[]>([])
+  const [runs, setRuns] = useState<RunUnified[]>([])
   const [errors, setErrors] = useState<AnyRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<'runs' | 'errors'>('runs')
@@ -26,12 +42,12 @@ export function RecentRunsTable({ refreshTrigger }: Props) {
     setLoading(true)
     try {
       const [runsRes, errRes] = await Promise.all([
-        fetch(buildApiUrl('/api/sb/query', { name: 'runs_recent', limit: '200' })),
+        fetch(buildApiUrl('/api/sb/query', { name: 'runs_unified', limit: '200' })),
         fetch(buildApiUrl('/api/sb/query', { name: 'recent_errors' })),
       ])
       const runsJson = await runsRes.json()
       const errJson = await errRes.json()
-      setRuns((runsJson.data ?? []).map((r: AnyRecord) => normaliseRun(r)))
+      setRuns(runsJson.data ?? [])
       setErrors(errJson.data ?? [])
     } catch (e) {
       console.error(e)
@@ -98,9 +114,9 @@ export function RecentRunsTable({ refreshTrigger }: Props) {
                 <thead className="sticky top-0">
                   <tr className="border-b border-border bg-secondary/60">
                     <th className="px-3 py-2 text-left text-muted-foreground font-medium">Функция</th>
-                    <th className="px-3 py-2 text-left text-muted-foreground font-medium w-24">Статус</th>
+                    <th className="px-3 py-2 text-left text-muted-foreground font-medium w-28">Статус</th>
                     <th className="px-3 py-2 text-left text-muted-foreground font-medium">Ошибка</th>
-                    <th className="px-3 py-2 text-left text-muted-foreground font-medium w-28">Начало</th>
+                    <th className="px-3 py-2 text-left text-muted-foreground font-medium w-24">Вх / Вых</th>
                     <th className="px-3 py-2 text-left text-muted-foreground font-medium w-20">Когда</th>
                   </tr>
                 </thead>
@@ -110,28 +126,34 @@ export function RecentRunsTable({ refreshTrigger }: Props) {
                       key={`${run.id}-${i}`}
                       className="border-b border-border/40 hover:bg-secondary/20 transition-colors"
                     >
-                      <td className="px-3 py-2 font-mono text-foreground">
-                        {truncate(run.name ?? String(run.id), 45) || '—'}
+                      <td className="px-3 py-2 text-foreground">
+                        <div className="font-medium">{run.functionLabelRu}</div>
+                        {run.source_label && (
+                          <div className="text-muted-foreground/50 font-mono text-[10px]">{truncate(run.source_label, 30)}</div>
+                        )}
                       </td>
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-1.5">
-                          <StatusDot status={run.status ?? 'idle'} />
-                          <span>{run.status ?? '—'}</span>
+                          <StatusDot status={run.statusVariant} />
+                          <span>{run.statusRu}</span>
                         </div>
                       </td>
                       <td className="px-3 py-2 max-w-[200px]">
-                        {run.error ? (
-                          <span className="text-neon-red/80 truncate block" title={run.error}>
-                            {truncate(run.error, 60)}
+                        {run.errorRu ? (
+                          <span className="text-neon-red/80 truncate block" title={run.error_text ?? run.errorRu}>
+                            {run.errorRu}
                           </span>
                         ) : (
                           <span className="text-muted-foreground/30">—</span>
                         )}
                       </td>
-                      <td className="px-3 py-2 text-muted-foreground font-mono">
-                        {formatDateTime(run.created_at)}
-                      </td>
                       <td className="px-3 py-2 text-muted-foreground">
+                        {run.count_in != null || run.count_out != null
+                          ? `${run.count_in ?? '—'} / ${run.count_out ?? '—'}`
+                          : '—'
+                        }
+                      </td>
+                      <td className="px-3 py-2 text-muted-foreground" title={formatDateTime(run.created_at)}>
                         {formatRelative(run.created_at)}
                       </td>
                     </tr>

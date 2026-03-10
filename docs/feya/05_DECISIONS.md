@@ -15,6 +15,14 @@ Notes:
 
 <!-- Добавляй новые записи сверху, самые свежие первыми -->
 
+## 2026-03-10 — Observability control layer: human-readable function registry + unified run history
+
+- Change: Создан `lib/domain/functionRegistry.ts` — единый источник истины: 7 функций с русскими метками, группами, нормализацией статусов (`getStatusLabelRu`), нормализацией ошибок (`normalizeErrorRu`). Добавлены `getRunsUnified` и `getSystemStatus` в `lib/api/queries.ts` — объединяют все 4 run-таблицы (`runs`, `extract_runs`, `b2b_place_runs`, `lm_tg_runs`) в единый нормализованный формат `RunUnified`. Зарегистрированы query-endpoints `runs_unified` и `system_status` в `/api/sb/query`. Создан `components/flow/SystemStatusBlock.tsx` — карточки по каждой функции (статус, последний запуск, ошибки за 24ч, вход/выход) + итоговая полоса (сколько работает / требует внимания / ошибок за 24ч). Обновлены `ActivityTable.tsx` и `RecentRunsTable.tsx` — используют `runs_unified`, показывают русские метки функций вместо UUID.
+- Why: Оператор видел сырые UUID в таблице прогонов вместо читаемых названий функций, а статусы были на английском. Невозможно было понять состояние системы без знания внутренних идентификаторов. Теперь `/flow` показывает состояние каждой функции по-русски с историей ошибок.
+- Risk: Минимальный. `getRunsUnified` — read-only, join-запросы к существующим таблицам. Если таблица недоступна — блок тихо не появляется. `SystemStatusBlock` рендерится только если данные вернулись.
+- How to verify: `/flow` — появляется секция «Состояние функций» с карточками по функциям. Таблица прогонов показывает «SERP сбор (Serper)» вместо UUID. `/control` → вкладка «Прогоны» — аналогично читаемые названия.
+- Rollback: Удалить `lib/domain/functionRegistry.ts`, удалить `getRunsUnified`/`getSystemStatus` из queries.ts, удалить два кейса из route.ts, удалить `SystemStatusBlock.tsx`, вернуть `ActivityTable.tsx` и `RecentRunsTable.tsx` к использованию `runs_recent` + `normaliseRun`.
+
 ## 2026-03-10 — Manager work queue: /queue page + SLA buckets
 
 - Change: Добавлена страница `/queue` («Очередь менеджера») с 5 бакетами: Просрочено, На сегодня, Ждёт ответа, Без следующего действия, Выполнено сегодня. Новый API endpoint `GET /api/actions/queue` агрегирует данные из `lead_actions` + `leads` + `v_lead_current_stage`. Портированы `lib/api/leadActions.ts` и `app/api/actions/lead-action/route.ts` из ветки manager-action-memory (не была смержена в main до этого PR). Обновлён `LeadDetailPanel` с секциями «Следующее действие», «Добавить действие», «Журнал действий». Добавлен пункт «Очередь» в сайдбар.

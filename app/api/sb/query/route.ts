@@ -19,6 +19,8 @@ import {
   getLeadCurrentStage,
   getLeadEverStage,
   getStageTransitions,
+  getRunsUnified,
+  getSystemStatus,
   type InboxTab,
 } from '@/lib/api/queries'
 
@@ -48,6 +50,8 @@ const ALLOWED_QUERIES = [
   'v_lead_current_stage',
   'v_lead_ever_stage',
   'v_stage_transitions',
+  'runs_unified',
+  'system_status',
 ] as const
 
 type QueryName = (typeof ALLOWED_QUERIES)[number]
@@ -191,6 +195,14 @@ export async function GET(req: NextRequest) {
 
       case 'v_stage_transitions':
         data = await getStageTransitions()
+        break
+
+      case 'runs_unified':
+        data = await getRunsUnified(Number(req.nextUrl.searchParams.get('limit') ?? 200))
+        break
+
+      case 'system_status':
+        data = await getSystemStatus()
         break
 
       default:

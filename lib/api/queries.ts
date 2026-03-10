@@ -1,5 +1,6 @@
 import { createAdminClient } from '../supabase/server'
 import { NormalisedLead, NormalisedRun, normaliseLead, normaliseRun } from '../field-resolver'
+import { getFunctionLabel, getStatusLabelRu, getStatusVariant, normalizeErrorRu } from '../domain/functionRegistry'
 
 export type InboxTab = 'b2b_hot' | 'people_hot' | 'event_review' | 'extract_people'
 
@@ -319,4 +320,265 @@ export async function getSchemaKeys() {
   }
 
   return sources
+}
+
+// ─── Unified run history ───────────────────────────────────────────────────────
+
+/**
+ * A normalised run row combining all 4 run tables:
+ *   runs (SERP), extract_runs, b2b_place_runs, lm_tg_runs.
+ */
+export interface RunUnified {
+  id:              string
+  functionId:      string
+  functionLabelRu: string
+  status:          string | null
+  statusRu:        string
+  statusVariant:   'ok' | 'error' | 'running' | 'warn' | 'idle'
+  created_at:      string | null
+  error_text:      string | null
+  errorRu:         string | null
+  /** Inputs processed (results_found / people_found / found) */
+  count_in:        number | null
+  /** Outputs created  (leads_created / people_upserted / upserted / sent_count) */
+  count_out:       number | null
+  /** Human-readable source identifier: source_slug or extractor name */
+  source_label:    string | null
+  /** Which DB table this row came from */
+  source_table:    'runs' | 'extract_runs' | 'b2b_place_runs' | 'lm_tg_runs'
+}
+
+/**
+ * Fetch recent runs from all 4 run tables, normalised and sorted newest-first.
+ * Joins `runs` with `sources` so SERP/Reddit entries get readable names.
+ */
+export async function getRunsUnified(limit = 200): Promise<RunUnified[]> {
+  const sb = createAdminClient()
+
+  const [runsRes, extractRes, placesRes, digestRes] = await Promise.all([
+    sb.from('runs')
+      .select('run_id, source_id, status, created_at, error_text, results_found, leads_created')
+      .order('created_at', { ascending: false })
+      .limit(200),
+    sb.from('extract_runs')
+      .select('extract_run_id, extractor, people_found, people_upserted, created_at, errors')
+      .order('created_at', { ascending: false })
+      .limit(100),
+    sb.from('b2b_place_runs')
+      .select('place_run_id, status, found, upserted, started_at, error_text')
+      .order('started_at', { ascending: false })
+      .limit(100),
+    sb.from('lm_tg_runs')
+      .select('run_id, status, found_count, sent_count, started_at, error_text, mode')
+      .order('started_at', { ascending: false })
+      .limit(50),
+  ])
+
+  // Resolve source_slug for runs rows
+  const sourceIds = [...new Set(
+    (runsRes.data ?? []).map((r: Record<string, string>) => r.source_id).filter(Boolean)
+  )]
+  const slugMap: Record<string, string> = {}
+  const nameMap: Record<string, string> = {}
+  if (sourceIds.length > 0) {
+    const { data: sources } = await sb
+      .from('sources')
+      .select('source_id, source_slug, source_name')
+      .in('source_id', sourceIds.slice(0, 300))
+    for (const s of sources ?? []) {
+      const raw = s as Record<string, string>
+      slugMap[raw.source_id] = raw.source_slug ?? ''
+      nameMap[raw.source_id] = raw.source_name ?? ''
+    }
+  }
+
+  const unified: RunUnified[] = []
+
+  // SERP / Reddit collector runs
+  for (const r of (runsRes.data ?? []) as Record<string, unknown>[]) {
+    const slug = slugMap[String(r.source_id)] ?? ''
+    const srcName = nameMap[String(r.source_id)] ?? ''
+    const funcId = slug.toLowerCase().includes('reddit')
+      ? 'collector_reddit_rss'
+      : 'collector_serp_serper'
+    const status = String(r.status ?? '')
+    unified.push({
+      id:              String(r.run_id),
+      functionId:      funcId,
+      functionLabelRu: getFunctionLabel(funcId),
+      status:          status || null,
+      statusRu:        getStatusLabelRu(status),
+      statusVariant:   getStatusVariant(status),
+      created_at:      String(r.created_at ?? ''),
+      error_text:      String(r.error_text ?? '') || null,
+      errorRu:         normalizeErrorRu(String(r.error_text ?? '') || null),
+      count_in:        typeof r.results_found === 'number' ? r.results_found : null,
+      count_out:       typeof r.leads_created === 'number' ? r.leads_created : null,
+      source_label:    srcName || slug || null,
+      source_table:    'runs',
+    })
+  }
+
+  // Extract people runs
+  for (const r of (extractRes.data ?? []) as Record<string, unknown>[]) {
+    const extractor = String(r.extractor ?? '')
+    const errText = r.errors
+      ? (() => { try { return JSON.stringify(r.errors).slice(0, 200) } catch { return null } })()
+      : null
+    unified.push({
+      id:              String(r.extract_run_id),
+      functionId:      extractor,
+      functionLabelRu: getFunctionLabel(extractor),
+      status:          'done',
+      statusRu:        getStatusLabelRu('done'),
+      statusVariant:   getStatusVariant('done'),
+      created_at:      String(r.created_at ?? ''),
+      error_text:      errText,
+      errorRu:         normalizeErrorRu(errText),
+      count_in:        typeof r.people_found    === 'number' ? r.people_found    : null,
+      count_out:       typeof r.people_upserted === 'number' ? r.people_upserted : null,
+      source_label:    getFunctionLabel(extractor),
+      source_table:    'extract_runs',
+    })
+  }
+
+  // Google Places / B2B place runs
+  for (const r of (placesRes.data ?? []) as Record<string, unknown>[]) {
+    const status = String(r.status ?? '')
+    unified.push({
+      id:              String(r.place_run_id),
+      functionId:      'collector_google_places',
+      functionLabelRu: getFunctionLabel('collector_google_places'),
+      status:          status || null,
+      statusRu:        getStatusLabelRu(status),
+      statusVariant:   getStatusVariant(status),
+      created_at:      String(r.started_at ?? ''),
+      error_text:      String(r.error_text ?? '') || null,
+      errorRu:         normalizeErrorRu(String(r.error_text ?? '') || null),
+      count_in:        typeof r.found    === 'number' ? r.found    : null,
+      count_out:       typeof r.upserted === 'number' ? r.upserted : null,
+      source_label:    'Google Places',
+      source_table:    'b2b_place_runs',
+    })
+  }
+
+  // Telegram / digest runs
+  for (const r of (digestRes.data ?? []) as Record<string, unknown>[]) {
+    const status = String(r.status ?? '')
+    const mode   = String(r.mode ?? '')
+    unified.push({
+      id:              String(r.run_id),
+      functionId:      'digest_email_daily',
+      functionLabelRu: mode ? `Дайджест (${mode})` : getFunctionLabel('digest_email_daily'),
+      status:          status || null,
+      statusRu:        getStatusLabelRu(status),
+      statusVariant:   getStatusVariant(status),
+      created_at:      String(r.started_at ?? ''),
+      error_text:      String(r.error_text ?? '') || null,
+      errorRu:         normalizeErrorRu(String(r.error_text ?? '') || null),
+      count_in:        typeof r.found_count === 'number' ? r.found_count : null,
+      count_out:       typeof r.sent_count  === 'number' ? r.sent_count  : null,
+      source_label:    'Telegram / Email',
+      source_table:    'lm_tg_runs',
+    })
+  }
+
+  return unified
+    .filter((r) => r.created_at && r.created_at !== 'undefined')
+    .sort((a, b) => new Date(b.created_at!).getTime() - new Date(a.created_at!).getTime())
+    .slice(0, limit)
+}
+
+// ─── Per-function system status ────────────────────────────────────────────────
+
+export interface FunctionHealth {
+  functionId:      string
+  functionLabelRu: string
+  groupRu:         string
+  lastRunAt:       string | null
+  lastStatus:      string | null
+  lastStatusRu:    string
+  statusVariant:   'ok' | 'error' | 'running' | 'warn' | 'idle'
+  errors24h:       number
+  lastError:       string | null
+  lastCountIn:     number | null
+  lastCountOut:    number | null
+}
+
+export interface SystemStatus {
+  functions:    FunctionHealth[]
+  summary: {
+    ok:          number
+    attention:   number
+    errors24h:   number
+    lastActivityAt: string | null
+  }
+}
+
+/**
+ * Derive per-function health from the unified run history.
+ * Called once per page load / refresh.
+ */
+export async function getSystemStatus(): Promise<SystemStatus> {
+  const runs = await getRunsUnified(500)
+
+  const now = Date.now()
+  const cutoff24h = now - 24 * 3600 * 1000
+
+  // Group by functionId
+  const groups: Record<string, RunUnified[]> = {}
+  for (const r of runs) {
+    if (!groups[r.functionId]) groups[r.functionId] = []
+    groups[r.functionId].push(r)
+  }
+
+  // Build per-function health
+  const functions: FunctionHealth[] = []
+  for (const [funcId, group] of Object.entries(groups)) {
+    const latest = group[0]  // already sorted newest-first
+    const errors24h = group.filter((r) => {
+      const ts = r.created_at ? new Date(r.created_at).getTime() : 0
+      return ts > cutoff24h && (r.statusVariant === 'error')
+    }).length
+
+    // Determine group label from registry
+    const { FUNCTION_REGISTRY } = await import('../domain/functionRegistry')
+    const meta = FUNCTION_REGISTRY[funcId as keyof typeof FUNCTION_REGISTRY]
+    const groupRu = meta?.groupRu ?? 'Прочее'
+
+    functions.push({
+      functionId:      funcId,
+      functionLabelRu: latest.functionLabelRu,
+      groupRu,
+      lastRunAt:       latest.created_at,
+      lastStatus:      latest.status,
+      lastStatusRu:    latest.statusRu,
+      statusVariant:   latest.statusVariant,
+      errors24h,
+      lastError:       latest.errorRu ?? latest.error_text,
+      lastCountIn:     latest.count_in,
+      lastCountOut:    latest.count_out,
+    })
+  }
+
+  // Sort: errors first, then by last run time
+  functions.sort((a, b) => {
+    const aScore = a.statusVariant === 'error' ? 0 : a.statusVariant === 'warn' ? 1 : 2
+    const bScore = b.statusVariant === 'error' ? 0 : b.statusVariant === 'warn' ? 1 : 2
+    if (aScore !== bScore) return aScore - bScore
+    return new Date(b.lastRunAt ?? 0).getTime() - new Date(a.lastRunAt ?? 0).getTime()
+  })
+
+  const ok        = functions.filter((f) => f.statusVariant === 'ok').length
+  const attention = functions.filter((f) => f.statusVariant === 'error' || f.statusVariant === 'warn').length
+  const errors24h = functions.reduce((sum, f) => sum + f.errors24h, 0)
+
+  const timestamps = runs
+    .map((r) => r.created_at ? new Date(r.created_at).getTime() : 0)
+    .filter((t) => t > 0)
+  const lastActivityAt = timestamps.length
+    ? new Date(Math.max(...timestamps)).toISOString()
+    : null
+
+  return { functions, summary: { ok, attention, errors24h, lastActivityAt } }
 }
