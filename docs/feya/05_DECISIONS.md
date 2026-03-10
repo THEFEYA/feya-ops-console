@@ -15,6 +15,17 @@ Notes:
 
 <!-- Добавляй новые записи сверху, самые свежие первыми -->
 
+## 2026-03-10 — SERP runtime stabilization: error diagnostics + preflight validation + Russian error labels
+
+- Change: Три уровня изменений.
+  1. **Edge function** `collector_serp_serper` v11→v16: добавлен захват тела ответа Serper при HTTP-ошибке (`readSerperError`). Вместо тупого `SERPER HTTP 400` теперь хранится `SERPER HTTP 400: <сообщение от Serper>`. Добавлена preflight-валидация: пропускаются пустые/null/undefined query_string без создания run-записи. Валидация параметров `gl`/`hl` (должны быть корректными ISO-кодами). Русские сообщения для ошибок конфигурации (missing key, missing source_id).
+  2. **UI error normalization** `lib/domain/serperErrors.ts` (новый файл): `parseSerperError` — декодирует `SERPER HTTP <code>[: <msg>]` в категорию (auth/quota/bad_request/server) и русскую метку. `normalizeRunErrorRu` — конвертирует error_text в краткий русский текст для UI. `getRunStatusLabelRu` — русские метки для статусов (done→Успешно, error→Ошибка, running→Выполняется и т.д.).
+  3. **Bugfix** `lib/field-resolver.ts`: `normaliseRun` не подхватывал `error_text` из таблицы `runs` — ошибки SERP были невидимы в UI. Добавлено `error_text` в candidates. Обновлены `ActivityTable.tsx` и `RecentRunsTable.tsx`: теперь показывают нормализованные русские ошибки (тул-тип сохраняет raw для отладки) и русские статусы. `RunButtons.tsx`: "Extract people: Reddit/RPF" → "Извлечение людей: Reddit/RPF".
+- Root cause найден: Serper HTTP 400 возникает в двух сценариях: (a) C3/v3.3 запросы с `site:therpf.com` — Serper возвращает 400 для этого домена системно (46 ошибок за 48ч); (b) C2/null запросы с event-специфичными строками — интермиттирующие ошибки (12 за 48ч), вероятно quota-related. До v11 тело ответа Serper не читалось, причина была неизвестна. После v11 — точная причина видна в error_text.
+- Risk: Edge function — обратно совместима, только добавлено чтение body при ошибке. UI — только читает и форматирует, не меняет данные. Если `parseSerperError` не распознаёт паттерн — показывается усечённый raw.
+- How to verify: (1) `/control` → «Прогоны» — статусы теперь по-русски, ошибки: «Некорректный запрос к Serper (400)» вместо «SERPER HTTP 400». (2) `/flow` → таблица событий — аналогично. (3) После следующего cron-запуска — в error_text появится сообщение от Serper (не просто код). (4) Кнопки «Извлечение людей: Reddit» и «Извлечение людей: RPF» на странице /control.
+- Rollback: Откатить edge function до v15 (через Supabase dashboard). Удалить `lib/domain/serperErrors.ts`. В `field-resolver.ts` убрать `error_text` из candidates. Убрать импорты из ActivityTable/RecentRunsTable, вернуть raw `run.status`/`run.error`.
+
 ## 2026-03-09 — Analytics action layer: stage history views + velocity analytics
 
 - Change: Добавлены три query-функции (`getLeadCurrentStage`, `getLeadEverStage`, `getStageTransitions`), зарегистрированы в `/api/sb/query` (три новых allowed names). В `/analytics` добавлены два блока: «Стадии лидов» (toggle текущая/ever-reached + таблица по источникам) и «Скорость воронки» (таблица переходов с median/p75 + таблица зависших лидов >72 ч.). Исправлен баг в `insertLeadStage`: dedup-запрос использовал колонку `id` вместо `outcome_id`. Удалён upsert-fallback в `insertLeadStage` и `setLeadOutcome` (таблица append-only, нет unique constraint на lead_id).

@@ -6,6 +6,7 @@ import { LoadingSpinner } from '@/components/shared/LoadingSpinner'
 import { StatusDot } from '@/components/shared/StatusDot'
 import { Button } from '@/components/ui/button'
 import { type NormalisedRun, normaliseRun } from '@/lib/field-resolver'
+import { normalizeRunErrorRu, getRunStatusLabelRu } from '@/lib/domain/serperErrors'
 import { formatDateTime, formatRelative, buildApiUrl, truncate } from '@/lib/utils'
 import { Copy, RefreshCw, Activity } from 'lucide-react'
 import { toast } from 'sonner'
@@ -116,13 +117,13 @@ export function RecentRunsTable({ refreshTrigger }: Props) {
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-1.5">
                           <StatusDot status={run.status ?? 'idle'} />
-                          <span>{run.status ?? '—'}</span>
+                          <span>{getRunStatusLabelRu(run.status)}</span>
                         </div>
                       </td>
                       <td className="px-3 py-2 max-w-[200px]">
                         {run.error ? (
                           <span className="text-neon-red/80 truncate block" title={run.error}>
-                            {truncate(run.error, 60)}
+                            {normalizeRunErrorRu(run.error) ?? truncate(run.error, 60)}
                           </span>
                         ) : (
                           <span className="text-muted-foreground/30">—</span>

@@ -5,6 +5,7 @@
 - [ ] Schema drift guardrails (stage/outcome/updated_at)
 - [ ] Stable funnel views
 - [ ] Batch fetching to avoid N+1
+- [x] SERP runtime stabilization: error body capture + preflight validation + Russian error labels
 
 ## Phase B — Explainability
 

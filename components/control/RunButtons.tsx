@@ -34,7 +34,7 @@ const RUN_BUTTONS: (RunButton & { icon: React.ElementType })[] = [
   },
   {
     id: 'extract_reddit',
-    label: 'Extract people: Reddit',
+    label: 'Извлечение людей: Reddit',
     functionName: 'extract_people_reddit',
     description: 'Извлечь профили людей из Reddit-постов и комментариев',
     defaultParams: { limitTasks: 50, maxActorAgeDays: 30 },
@@ -43,7 +43,7 @@ const RUN_BUTTONS: (RunButton & { icon: React.ElementType })[] = [
   },
   {
     id: 'extract_rpf',
-    label: 'Extract people: RPF',
+    label: 'Извлечение людей: RPF',
     functionName: 'extract_people_rpf',
     description: 'Извлечь профили людей через RPF-экстрактор',
     defaultParams: { limitTasks: 50, maxActorAgeDays: 30 },

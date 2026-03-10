@@ -7,6 +7,7 @@ import { StatusDot } from '@/components/shared/StatusDot'
 import { Badge } from '@/components/ui/badge'
 import { formatDateTime, formatRelative, buildApiUrl, truncate } from '@/lib/utils'
 import { normaliseRun, type NormalisedRun } from '@/lib/field-resolver'
+import { normalizeRunErrorRu, getRunStatusLabelRu } from '@/lib/domain/serperErrors'
 import { Activity } from 'lucide-react'
 
 interface Props {
@@ -79,14 +80,14 @@ export function ActivityTable({ filterNode }: Props) {
                       {run.status ? (
                         <div className="flex items-center gap-1.5">
                           <StatusDot status={run.status} />
-                          <span className="text-xs">{run.status}</span>
+                          <span className="text-xs">{getRunStatusLabelRu(run.status)}</span>
                         </div>
                       ) : '—'}
                     </td>
                     <td className="px-4 py-2.5 max-w-[200px]">
                       {run.error ? (
                         <span className="text-xs text-neon-red/80 truncate block" title={run.error}>
-                          {truncate(run.error, 60)}
+                          {normalizeRunErrorRu(run.error) ?? truncate(run.error, 60)}
                         </span>
                       ) : (
                         <span className="text-muted-foreground/30">—</span>
