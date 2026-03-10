@@ -15,6 +15,16 @@ Notes:
 
 <!-- Добавляй новые записи сверху, самые свежие первыми -->
 
+## 2026-03-10 — Platform convergence: восстановление всех пропущенных слоёв из немержед-веток
+
+- Change: Создана ветка `claude/platform-convergence-serp-fix-BpS8q` от main (bc2a6c2). В main не попали 4 ветки, которые были одобрены и разработаны, но не смержены: manager-queue-sla (очередь), observability-control-layer (SystemStatus + functionRegistry), source-health-action-layer (Здоровье источников), serp-runtime-stabilization (serperErrors.ts + field-resolver bugfix). Все 4 слоя портированы через cherry-pick с разрешением конфликтов.
+- Missing from main (confirmed): Queue page (`/queue`), sidebar entry «Очередь», SystemStatusBlock на `/flow`, блок «Здоровье источников» в analytics, `lib/domain/serperErrors.ts`, bugfix field-resolver `error_text`, русские метки кнопок RunButtons.
+- Queue disappearance: **регрессия** — ветка manager-queue-sla была разработана на main но не создан PR и не смержена. Очередь не пропала — она просто не была включена в main.
+- Edge function status: collector_serp_serper **v16** активна (подтверждено через Supabase MCP + edge-function logs). Последние прогоны — v16. Transition с v15 на v16 произошёл ~14:08 UTC 2026-03-10.
+- SERP root cause: «Not enough credits» (Serper quota) — не баг кода. 58 bare «SERPER HTTP 400» ошибок — исторические, до деплоя v16. Паттерн site:therpf.com не подтверждён в текущем 48h окне.
+- How to verify: `/flow` содержит SystemStatusBlock; `/queue` открывается; sidebar имеет «Очередь»; `/analytics` показывает «Здоровье источников»; `/control` → «Прогоны» показывает русские статусы/ошибки; edge logs показывают version=16.
+- Rollback: `git revert` этого PR (откатит все 4 слоя разом).
+
 ## 2026-03-10 — SERP runtime stabilization: error body capture + preflight validation
 
 - Change: `lib/domain/serperErrors.ts` — новый модуль: `parseSerperError()` декодирует текст ошибки из `error_text` в структуру `SerperErrorInfo` с категорией (auth/quota/bad_request/server); `normalizeRunErrorRu()` — короткий русский label для UI; `getRunStatusLabelRu()` — русские статусы. Bugfix в `lib/field-resolver.ts`: `normaliseRun()` не включал `error_text` в кандидаты поля `error` — SERP-ошибки были невидимы в таблицах UI. `components/control/RunButtons.tsx`: «Extract people: Reddit» → «Извлечение людей: Reddit», «Extract people: RPF» → «Извлечение людей: RPF». Edge function `collector_serp_serper` v16 (задеплоена отдельно): `readSerperError()` захватывает тело ответа Serper при ошибке; `error_text` теперь содержит «SERPER HTTP 400: Not enough credits» вместо «SERPER HTTP 400»; preflight проверяет пустые/null query_string, gl/hl параметры.
