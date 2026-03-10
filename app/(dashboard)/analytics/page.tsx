@@ -215,6 +215,215 @@ function aggregateFunnelByDay(rows: FunnelRow[]): FunnelDayPoint[] {
     }))
 }
 
+// ─── Source health helpers ─────────────────────────────────────────────────────
+
+/**
+ * One row in the source health table.
+ * All metrics derived client-side from v_lead_current_stage + v_lead_ever_stage + v_stage_transitions.
+ */
+interface SourceHealthRow {
+  source: string
+  total: number          // total leads with any stage in current-stage view
+  // current stage counts
+  cur_qualified: number
+  cur_meeting: number
+  cur_proposal: number
+  cur_won: number
+  cur_lost: number
+  cur_rejected: number
+  // ever-reached counts (from ever-stage view)
+  ever_meeting: number
+  ever_proposal: number
+  ever_won: number
+  // derived rates (0–100, %)
+  reject_rate: number    // cur_rejected / total
+  win_rate: number       // cur_won / total
+  rollback_rate: number  // rollbacks / total transitions (from transitions)
+  // action label
+  action: 'Scale' | 'Review' | 'Watch' | 'Stuck'
+}
+
+/** Progress pipeline order for ever-reached comparison */
+const PROGRESS_ORDER_IDX: Record<string, number> = {
+  qualified: 0, contacted: 1, replied: 2, meeting: 3, proposal: 4, won: 5, lost: 5,
+}
+
+function pct(num: number, den: number): number {
+  if (den === 0) return 0
+  return Math.round((num / den) * 1000) / 10  // one decimal
+}
+
+/**
+ * Derive action label from source metrics.
+ * Rules (evaluated in order — first match wins):
+ *   Scale  — win_rate ≥ 5% AND ever_proposal ≥ 2 AND ever_won ≥ 1
+ *   Review — reject_rate ≥ 40% AND total ≥ 5
+ *   Stuck  — cur_qualified ≥ 3 AND ever_meeting === 0 AND total ≥ 5
+ *   Watch  — everything else
+ */
+function deriveAction(r: Omit<SourceHealthRow, 'action'>): SourceHealthRow['action'] {
+  if (r.win_rate >= 5 && r.ever_proposal >= 2 && r.ever_won >= 1) return 'Scale'
+  if (r.reject_rate >= 40 && r.total >= 5) return 'Review'
+  if (r.cur_qualified >= 3 && r.ever_meeting === 0 && r.total >= 5) return 'Stuck'
+  return 'Watch'
+}
+
+function computeSourceHealth(
+  currentRows: Record<string, unknown>[],
+  everRows: Record<string, unknown>[],
+  transitionRows: Record<string, unknown>[],
+): SourceHealthRow[] {
+  // Build transition rollback counts per source
+  const rollbacksBySrc: Record<string, number> = {}
+  const transitionsBySrc: Record<string, number> = {}
+  for (const r of transitionRows) {
+    const src = String(r.source_slug ?? '').trim()
+    if (!src) continue
+    transitionsBySrc[src] = (transitionsBySrc[src] ?? 0) + 1
+    const fromIdx = PROGRESS_ORDER_IDX[r.from_stage as string] ?? -1
+    const toIdx   = PROGRESS_ORDER_IDX[r.to_stage   as string] ?? -1
+    if (fromIdx >= 0 && toIdx >= 0 && toIdx < fromIdx) {
+      rollbacksBySrc[src] = (rollbacksBySrc[src] ?? 0) + 1
+    }
+  }
+
+  // Build ever-reached per source
+  const everBySrc: Record<string, { meeting: number; proposal: number; won: number }> = {}
+  for (const r of everRows) {
+    const src = String(r.source_slug ?? '').trim()
+    if (!src) continue
+    if (!everBySrc[src]) everBySrc[src] = { meeting: 0, proposal: 0, won: 0 }
+    const stage = String(r.ever_stage ?? '').trim()
+    const stageIdx = PROGRESS_ORDER_IDX[stage] ?? -1
+    if (stageIdx >= PROGRESS_ORDER_IDX['meeting'])  everBySrc[src].meeting++
+    if (stageIdx >= PROGRESS_ORDER_IDX['proposal']) everBySrc[src].proposal++
+    if (stage === 'won') everBySrc[src].won++
+  }
+
+  // Build current-stage counts per source
+  const bySrc: Record<string, Omit<SourceHealthRow, 'action'>> = {}
+  for (const r of currentRows) {
+    const src = String(r.source_slug ?? '').trim() || '(без источника)'
+    if (!bySrc[src]) {
+      bySrc[src] = {
+        source: src, total: 0,
+        cur_qualified: 0, cur_meeting: 0, cur_proposal: 0,
+        cur_won: 0, cur_lost: 0, cur_rejected: 0,
+        ever_meeting: 0, ever_proposal: 0, ever_won: 0,
+        reject_rate: 0, win_rate: 0, rollback_rate: 0,
+      }
+    }
+    bySrc[src].total++
+    const stage = String(r.current_stage ?? '').trim()
+    if (stage === 'qualified') bySrc[src].cur_qualified++
+    if (stage === 'meeting')   bySrc[src].cur_meeting++
+    if (stage === 'proposal')  bySrc[src].cur_proposal++
+    if (stage === 'won')       bySrc[src].cur_won++
+    if (stage === 'lost')      bySrc[src].cur_lost++
+    if (stage === 'rejected')  bySrc[src].cur_rejected++
+  }
+
+  return Object.values(bySrc)
+    .filter((r) => r.total > 0)
+    .map((r) => {
+      const ever = everBySrc[r.source] ?? { meeting: 0, proposal: 0, won: 0 }
+      const rb = rollbacksBySrc[r.source] ?? 0
+      const tr = transitionsBySrc[r.source] ?? 0
+      const full: Omit<SourceHealthRow, 'action'> = {
+        ...r,
+        ever_meeting:  ever.meeting,
+        ever_proposal: ever.proposal,
+        ever_won:      ever.won,
+        reject_rate:   pct(r.cur_rejected, r.total),
+        win_rate:      pct(r.cur_won, r.total),
+        rollback_rate: pct(rb, tr),
+      }
+      return { ...full, action: deriveAction(full) }
+    })
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 20)
+}
+
+/** Top signals derived from source health rows — the "Что делать сейчас" summary */
+interface ActionSignal { label: string; source: string; detail: string }
+
+function deriveActionSignals(rows: SourceHealthRow[]): ActionSignal[] {
+  const signals: ActionSignal[] = []
+  if (rows.length === 0) return signals
+
+  // Highest reject rate (min 5 leads)
+  const worstReject = rows.filter((r) => r.total >= 5).sort((a, b) => b.reject_rate - a.reject_rate)[0]
+  if (worstReject && worstReject.reject_rate >= 20) {
+    signals.push({
+      label: 'Высокий reject rate',
+      source: worstReject.source,
+      detail: `${worstReject.reject_rate}% отклонено (${worstReject.cur_rejected}/${worstReject.total})`,
+    })
+  }
+
+  // Most stuck (qualified but never meeting)
+  const mostStuck = rows.filter((r) => r.action === 'Stuck').sort((a, b) => b.cur_qualified - a.cur_qualified)[0]
+  if (mostStuck) {
+    signals.push({
+      label: 'Много зависших лидов',
+      source: mostStuck.source,
+      detail: `${mostStuck.cur_qualified} в Квалиф., ни одного в Встречу`,
+    })
+  }
+
+  // Best meeting→proposal movement (ever_proposal / ever_meeting)
+  const bestMtoP = rows
+    .filter((r) => r.ever_meeting >= 2)
+    .map((r) => ({ ...r, mp_rate: pct(r.ever_proposal, r.ever_meeting) }))
+    .sort((a, b) => b.mp_rate - a.mp_rate)[0]
+  if (bestMtoP && bestMtoP.mp_rate >= 30) {
+    signals.push({
+      label: 'Лучший переход Встреча→КП',
+      source: bestMtoP.source,
+      detail: `${bestMtoP.mp_rate}% доходят до КП (${bestMtoP.ever_proposal}/${bestMtoP.ever_meeting})`,
+    })
+  }
+
+  // Best proposal→won signal
+  const bestPtoW = rows
+    .filter((r) => r.ever_proposal >= 2)
+    .map((r) => ({ ...r, pw_rate: pct(r.ever_won, r.ever_proposal) }))
+    .sort((a, b) => b.pw_rate - a.pw_rate)[0]
+  if (bestPtoW && bestPtoW.pw_rate >= 20) {
+    signals.push({
+      label: 'Лучший КП→Сделка',
+      source: bestPtoW.source,
+      detail: `${bestPtoW.pw_rate}% побеждают (${bestPtoW.ever_won}/${bestPtoW.ever_proposal})`,
+    })
+  }
+
+  // Scale candidate
+  const scaleCandidate = rows.find((r) => r.action === 'Scale')
+  if (scaleCandidate) {
+    signals.push({
+      label: 'Масштабировать',
+      source: scaleCandidate.source,
+      detail: `win rate ${scaleCandidate.win_rate}%, ${scaleCandidate.ever_won} сделок`,
+    })
+  }
+
+  return signals.slice(0, 5)
+}
+
+const ACTION_COLORS: Record<SourceHealthRow['action'], string> = {
+  Scale:  'text-emerald-400 border-emerald-400/30 bg-emerald-400/10',
+  Review: 'text-red-400 border-red-400/30 bg-red-400/10',
+  Stuck:  'text-amber-400 border-amber-400/30 bg-amber-400/10',
+  Watch:  'text-muted-foreground border-border bg-secondary/30',
+}
+
+const ACTION_LABELS_RU: Record<SourceHealthRow['action'], string> = {
+  Scale:  'Масштаб',
+  Review: 'Разобраться',
+  Watch:  'Наблюдать',
+  Stuck:  'Застрял',
+}
+
 // ─── Conversion helpers (fallback when funnel views are empty) ─────────────────
 
 function conversionBy(
@@ -474,6 +683,36 @@ function AnalyticsInner({ safeMode }: { safeMode: boolean }) {
     },
     [dispatch, filtersLocked, showToast]
   )
+
+  // Source health state — fetched once on mount from stage-history views
+  const [shCurrentRows, setShCurrentRows] = useState<Record<string, unknown>[]>([])
+  const [shEverRows,    setShEverRows]    = useState<Record<string, unknown>[]>([])
+  const [shTransRows,   setShTransRows]   = useState<Record<string, unknown>[]>([])
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadSourceHealth() {
+      try {
+        const [curRes, everRes, trRes] = await Promise.all([
+          fetch(buildApiUrl('/api/sb/query', { name: 'v_lead_current_stage' }), { cache: 'no-store' }),
+          fetch(buildApiUrl('/api/sb/query', { name: 'v_lead_ever_stage' }),    { cache: 'no-store' }),
+          fetch(buildApiUrl('/api/sb/query', { name: 'v_stage_transitions' }),  { cache: 'no-store' }),
+        ])
+        if (curRes.ok)  { const j = await curRes.json();  if (!cancelled) setShCurrentRows(j.data ?? []) }
+        if (everRes.ok) { const j = await everRes.json(); if (!cancelled) setShEverRows(j.data ?? []) }
+        if (trRes.ok)   { const j = await trRes.json();   if (!cancelled) setShTransRows(j.data ?? []) }
+      } catch { /* best-effort */ }
+    }
+    loadSourceHealth()
+    return () => { cancelled = true }
+  }, [])
+
+  const sourceHealthRows = useMemo(
+    () => computeSourceHealth(shCurrentRows, shEverRows, shTransRows),
+    [shCurrentRows, shEverRows, shTransRows]
+  )
+
+  const actionSignals = useMemo(() => deriveActionSignals(sourceHealthRows), [sourceHealthRows])
 
   // Local focus stage for conversion block (does NOT add to global filters)
   const [focusStage, setFocusStage] = useState<'approved' | 'shortlisted' | 'rejected' | null>(null)
@@ -999,6 +1238,95 @@ function AnalyticsInner({ safeMode }: { safeMode: boolean }) {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Здоровье источников ─────────────────────────────────────────── */}
+      {!safeMode && sourceHealthRows.length > 0 && (
+        <div className="rounded-lg border border-border bg-card/50 overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-border/60 bg-secondary/30">
+            <span className="text-sm font-medium">Здоровье источников</span>
+            <span className="text-[10px] text-muted-foreground/60 ml-2">текущие стадии · ever-reached · действие</span>
+          </div>
+
+          {/* "Что делать сейчас" signals */}
+          {actionSignals.length > 0 && (
+            <div className="px-4 pt-3 pb-2 border-b border-border/40">
+              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2">Что делать сейчас</p>
+              <div className="flex flex-wrap gap-2">
+                {actionSignals.map((sig, i) => (
+                  <div key={i} className="flex flex-col gap-0.5 bg-secondary/40 border border-border/60 rounded px-2.5 py-1.5 min-w-[160px]">
+                    <span className="text-[10px] font-semibold text-neon-cyan">{sig.label}</span>
+                    <span className="text-[11px] text-foreground/80 font-medium">{sig.source}</span>
+                    <span className="text-[10px] text-muted-foreground/70">{sig.detail}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Source health table */}
+          <div className="overflow-x-auto p-4">
+            <table className="w-full text-[11px]">
+              <thead>
+                <tr className="text-muted-foreground border-b border-border/40">
+                  <th className="text-left py-1 pr-3 font-medium w-36">Источник</th>
+                  <th className="text-right py-1 px-1.5 font-medium">Лидов</th>
+                  <th className="text-right py-1 px-1.5 font-medium">Квалиф.</th>
+                  <th className="text-right py-1 px-1.5 font-medium">Встреча</th>
+                  <th className="text-right py-1 px-1.5 font-medium">КП</th>
+                  <th className="text-right py-1 px-1.5 font-medium">Сделка</th>
+                  <th className="text-right py-1 px-1.5 font-medium">Провал</th>
+                  <th className="text-right py-1 px-1.5 font-medium">Откл.</th>
+                  <th className="text-right py-1 px-1.5 font-medium">⌃Встреча</th>
+                  <th className="text-right py-1 px-1.5 font-medium">⌃КП</th>
+                  <th className="text-right py-1 px-1.5 font-medium">⌃Сделка</th>
+                  <th className="text-right py-1 px-1.5 font-medium">Reject%</th>
+                  <th className="text-right py-1 px-1.5 font-medium">Win%</th>
+                  <th className="text-right py-1 px-1.5 font-medium">Rollback%</th>
+                  <th className="text-left py-1 pl-2 font-medium">Действие</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sourceHealthRows.map((r) => (
+                  <tr key={r.source} className="border-b border-border/20 hover:bg-secondary/20 transition-colors">
+                    <td className="py-1.5 pr-3">
+                      <button
+                        onClick={() => handleCrossFilter('source_slug', r.source)}
+                        className="text-foreground/80 hover:text-neon-cyan transition-colors text-left truncate max-w-[130px] block"
+                      >
+                        {r.source}
+                      </button>
+                    </td>
+                    <td className="text-right py-1.5 px-1.5 font-mono text-muted-foreground">{r.total}</td>
+                    <td className="text-right py-1.5 px-1.5 font-mono">{r.cur_qualified || '—'}</td>
+                    <td className="text-right py-1.5 px-1.5 font-mono">{r.cur_meeting || '—'}</td>
+                    <td className="text-right py-1.5 px-1.5 font-mono">{r.cur_proposal || '—'}</td>
+                    <td className="text-right py-1.5 px-1.5 font-mono text-emerald-400">{r.cur_won || '—'}</td>
+                    <td className="text-right py-1.5 px-1.5 font-mono text-red-400/70">{r.cur_lost || '—'}</td>
+                    <td className="text-right py-1.5 px-1.5 font-mono text-red-400/50">{r.cur_rejected || '—'}</td>
+                    <td className="text-right py-1.5 px-1.5 font-mono text-neon-cyan/70">{r.ever_meeting || '—'}</td>
+                    <td className="text-right py-1.5 px-1.5 font-mono text-neon-cyan/70">{r.ever_proposal || '—'}</td>
+                    <td className="text-right py-1.5 px-1.5 font-mono text-emerald-400/80">{r.ever_won || '—'}</td>
+                    <td className={`text-right py-1.5 px-1.5 font-mono ${r.reject_rate >= 40 ? 'text-red-400' : 'text-muted-foreground/70'}`}>
+                      {r.reject_rate > 0 ? `${r.reject_rate}%` : '—'}
+                    </td>
+                    <td className={`text-right py-1.5 px-1.5 font-mono ${r.win_rate >= 5 ? 'text-emerald-400' : 'text-muted-foreground/70'}`}>
+                      {r.win_rate > 0 ? `${r.win_rate}%` : '—'}
+                    </td>
+                    <td className={`text-right py-1.5 px-1.5 font-mono ${r.rollback_rate >= 20 ? 'text-amber-400' : 'text-muted-foreground/50'}`}>
+                      {r.rollback_rate > 0 ? `${r.rollback_rate}%` : '—'}
+                    </td>
+                    <td className="py-1.5 pl-2">
+                      <span className={`inline-block px-1.5 py-0.5 rounded border text-[10px] font-medium ${ACTION_COLORS[r.action]}`}>
+                        {ACTION_LABELS_RU[r.action]}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
