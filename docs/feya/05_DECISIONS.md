@@ -15,6 +15,15 @@ Notes:
 
 <!-- Добавляй новые записи сверху, самые свежие первыми -->
 
+## 2026-03-10 — SERP runtime stabilization: error body capture + preflight validation
+
+- Change: `lib/domain/serperErrors.ts` — новый модуль: `parseSerperError()` декодирует текст ошибки из `error_text` в структуру `SerperErrorInfo` с категорией (auth/quota/bad_request/server); `normalizeRunErrorRu()` — короткий русский label для UI; `getRunStatusLabelRu()` — русские статусы. Bugfix в `lib/field-resolver.ts`: `normaliseRun()` не включал `error_text` в кандидаты поля `error` — SERP-ошибки были невидимы в таблицах UI. `components/control/RunButtons.tsx`: «Extract people: Reddit» → «Извлечение людей: Reddit», «Extract people: RPF» → «Извлечение людей: RPF». Edge function `collector_serp_serper` v16 (задеплоена отдельно): `readSerperError()` захватывает тело ответа Serper при ошибке; `error_text` теперь содержит «SERPER HTTP 400: Not enough credits» вместо «SERPER HTTP 400»; preflight проверяет пустые/null query_string, gl/hl параметры.
+- Why: Оператор видел только «SERPER HTTP 400» без причины. Нельзя было понять — это проблема запроса, квоты или ключа. Теперь ошибка читаемая.
+- Root cause SERP failures (аудит 48ч): 30 ошибок «Not enough credits» (квота Serper исчерпана, не проблема кода) + 58 старых bare «SERPER HTTP 400» (до деплоя v16, причина неизвестна). Паттерн site:therpf.com НЕ подтверждён в текущем окне — все активные ошибки quota-related.
+- Edge function version: collector_serp_serper **v16** (Supabase version ID = 16, внутренний BUILD = "serper_v11"). Задеплоена 2026-03-10 ~14:08 UTC.
+- How to verify: `/control` → «Прогоны» → ошибки SERP показывают «Квота Serper» / «Ошибка API Serper» вместо сырого текста. Запустить SERP вручную → в runs появляется run_id с error_text включающим сообщение Serper.
+- Rollback: Удалить `lib/domain/serperErrors.ts`; восстановить `error` candidates в `normaliseRun()` без `error_text`; восстановить английские кнопки в RunButtons.tsx.
+
 ## 2026-03-10 — Observability control layer: human-readable function registry + unified run history
 
 - Change: Создан `lib/domain/functionRegistry.ts` — единый источник истины: 7 функций с русскими метками, группами, нормализацией статусов (`getStatusLabelRu`), нормализацией ошибок (`normalizeErrorRu`). Добавлены `getRunsUnified` и `getSystemStatus` в `lib/api/queries.ts` — объединяют все 4 run-таблицы (`runs`, `extract_runs`, `b2b_place_runs`, `lm_tg_runs`) в единый нормализованный формат `RunUnified`. Зарегистрированы query-endpoints `runs_unified` и `system_status` в `/api/sb/query`. Создан `components/flow/SystemStatusBlock.tsx` — карточки по каждой функции (статус, последний запуск, ошибки за 24ч, вход/выход) + итоговая полоса (сколько работает / требует внимания / ошибок за 24ч). Обновлены `ActivityTable.tsx` и `RecentRunsTable.tsx` — используют `runs_unified`, показывают русские метки функций вместо UUID.

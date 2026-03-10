@@ -144,7 +144,7 @@ export function normaliseRun(row: AnyRecord): NormalisedRun {
     id: resolveField(row, 'id', 'run_id', 'task_id') ?? '',
     name: resolveField(row, 'name', 'function_name', 'fn', 'type', 'kind'),
     status: resolveField(row, 'status', 'state', 'result'),
-    error: resolveField(row, 'error', 'error_message', 'err', 'message'),
+    error: resolveField(row, 'error', 'error_text', 'error_message', 'err', 'message'),
     created_at: resolveField(row, 'created_at', 'started_at', 'ts', 'inserted_at'),
     finished_at: resolveField(row, 'finished_at', 'completed_at', 'ended_at'),
     duration_ms: resolveField(row, 'duration_ms', 'latency_ms', 'elapsed_ms'),

@@ -6,6 +6,7 @@
 - [x] Stable funnel views
 - [x] Batch fetching to avoid N+1
 - [x] Observability control layer: unified run history + function registry + system status block
+- [x] SERP runtime stabilization: error body capture + preflight validation + Russian error labels (edge fn v16)
 
 ## Phase B — Operational visibility ✓
 
