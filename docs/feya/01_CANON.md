@@ -45,6 +45,23 @@ An action that the system requests from operator or automation:
 
 What the human decided and why. This becomes training signal.
 
+### Manager Action (оперативный слой памяти)
+
+A human-created action record tied to a specific lead.
+Represents what the manager plans to do or has done — not automation.
+
+Must include:
+- action_type: research | contact | follow_up | meeting | proposal | close
+- action_status: planned | done | canceled
+- lead_id (FK → leads)
+- optional: note, due_at, done_at, actor_label
+
+Manager actions are the first layer of human memory. They answer:
+"Что мы уже пробовали с этим лидом? Что запланировано на сейчас?"
+
+Scripts, playbooks, and smart hints are future layers built on top of this memory —
+they are NOT part of the current MVP.
+
 ## 3) Pipeline (validated operational path)
 
 SERP / Reddit / Places / OSM / Forum threads
@@ -80,10 +97,17 @@ Intent score, reach score, freshness score, event relevance, business value.
 B2C: event prep, outfit buying, "where to buy", commission, custom.
 B2B: organizer/vendor/procurement/wardrobe sourcing — must avoid job noise.
 
-## 6) Source-of-truth hierarchy
+## 6) UI language rule
+
+All operator-facing UI text must be in Russian.
+Internal identifiers (DB column names, API field names, TypeScript type values) may remain English.
+If a string is visible in the browser — it must be Russian.
+
+## 7) Source-of-truth hierarchy
 
 1) This Canon (docs/feya/01_CANON.md)
 2) Working rules (docs/feya/02_WORKING_RULES.md)
 3) Current state (docs/feya/03_CURRENT_STATE.md)
 4) Decisions log (docs/feya/05_DECISIONS.md)
-5) Everything else is supportive/appendix.
+5) Schema contract (docs/feya/06_SCHEMA_CONTRACT.md)
+6) Everything else is supportive/appendix.

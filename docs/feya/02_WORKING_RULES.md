@@ -54,3 +54,19 @@ We track:
 
 Human decisions must be logged (why approved/rejected).
 This becomes future auto-policy.
+
+## Rule 9: Russian-first UI
+
+All operator-facing labels, buttons, table headers, toasts, and placeholders must be in Russian.
+Internal identifiers (DB column names, API fields, TypeScript identifiers) may be English.
+Rule: if a string is visible in the browser to an operator — it must be Russian.
+
+## Rule 10: Build memory before automation
+
+Correct order of layers:
+1. **Memory** — record what happened, what is planned (current MVP)
+2. **Queue + SLA** — surface what is overdue, what to do next
+3. **Scenarios** — guided flows and playbooks
+4. **AI hints** — grounded in memory + canon, not speculation
+
+Do not skip ahead. Build and validate each layer before the next.

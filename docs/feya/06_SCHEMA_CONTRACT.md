@@ -57,6 +57,55 @@ Defined in `lib/domain/stage.ts` — import from there, never hardcode.
 Returns `{ ok: boolean, missing: string[] }`.
 If `ok: false` — the Analytics conversion block and Inbox stage badges may be broken.
 
+## Canonical table: `public.lead_actions`
+
+Stores manager action memory — one row per action event (mutable via `action_status`).
+Created via migration `create_lead_actions`.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `action_id` | uuid | PK, default gen_random_uuid() |
+| `lead_id` | uuid | FK → `leads.id` |
+| `action_type` | text | CHECK: research \| contact \| follow_up \| meeting \| proposal \| close |
+| `action_status` | text | CHECK: planned \| done \| canceled; default 'planned' |
+| `note` | text | nullable |
+| `due_at` | timestamptz | nullable; used for overdue detection |
+| `done_at` | timestamptz | nullable; set automatically when status → done |
+| `actor_label` | text | nullable; free-text name of the manager |
+| `meta` | jsonb | default '{}'; arbitrary metadata |
+| `created_at` | timestamptz | set on insert |
+
+### Action type Russian labels (canonical)
+
+| action_type | RU label |
+|-------------|----------|
+| `research` | Изучить |
+| `contact` | Написать |
+| `follow_up` | Напомнить |
+| `meeting` | Встреча |
+| `proposal` | КП |
+| `close` | Закрыть |
+
+### Action status Russian labels
+
+| action_status | RU label |
+|---------------|----------|
+| `planned` | Запланировано |
+| `done` | Выполнено |
+| `canceled` | Отменено |
+
+### API
+
+- `GET /api/actions/lead-action?lead_id=<id>` — returns `{ data: LeadAction[] }` newest first
+- `POST /api/actions/lead-action` body: `{ lead_id, action_type, note?, due_at?, actor_label? }` — creates planned action
+- `PATCH /api/actions/lead-action` body: `{ action_id, action_status: 'done'|'canceled' }` — updates status
+
+### Indexes
+
+- `lead_actions_lead_id_idx` on `(lead_id, created_at DESC)` — primary fetch pattern
+- `lead_actions_due_at_idx` on `(due_at)` WHERE planned — for future SLA/overdue queue
+- `lead_actions_status_idx` on `(action_status, due_at)` — for queue views
+
 ## How to add a new stage
 
 1. Add the value to `STAGES` in `lib/domain/stage.ts`
