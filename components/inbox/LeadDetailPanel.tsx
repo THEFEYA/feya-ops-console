@@ -2,7 +2,14 @@
 
 import { useState, useEffect } from 'react'
 import { toast } from 'sonner'
-import { X, ExternalLink, CheckCircle, Star, XCircle, FileText, Info, MessageCircle, ChevronDown, ChevronUp, Clock } from 'lucide-react'
+import { X, ExternalLink, CheckCircle, Star, XCircle, FileText, Info, MessageCircle, ChevronDown, ChevronUp, Clock, Zap, Check, Ban } from 'lucide-react'
+import {
+  ACTION_TYPES,
+  ACTION_TYPE_RU,
+  ACTION_STATUS_RU,
+  type ActionType,
+  type LeadAction,
+} from '@/lib/api/leadActions'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
@@ -58,6 +65,13 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
   const [explainSource, setExplainSource] = useState<'api' | 'fallback' | null>(null)
   const [explainLoading, setExplainLoading] = useState(false)
 
+  // Manager action memory state
+  const [actions, setActions] = useState<LeadAction[]>([])
+  const [actionsLoading, setActionsLoading] = useState(false)
+  const [actionNote, setActionNote] = useState('')
+  const [actionDueAt, setActionDueAt] = useState('')
+  const [actionSubmitting, setActionSubmitting] = useState(false)
+
   const reasons = generateLeadReasons(lead)
 
   // Load UI terms dictionary once (module-level cache)
@@ -100,6 +114,68 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
       })
       .catch(() => {})
   }, [lead.id])
+
+  // Load actions for this lead when lead changes
+  useEffect(() => {
+    setActions([])
+    if (!lead.id) return
+    setActionsLoading(true)
+    fetch(buildApiUrl('/api/actions/lead-action', { lead_id: String(lead.id) }), { cache: 'no-store' })
+      .then((r) => r.ok ? r.json() : null)
+      .then((json) => { if (json?.data) setActions(json.data) })
+      .catch(() => {})
+      .finally(() => setActionsLoading(false))
+  }, [lead.id])
+
+  async function handleCreateAction(actionType: ActionType) {
+    if (actionSubmitting) return
+    setActionSubmitting(true)
+    try {
+      const res = await fetch(buildApiUrl('/api/actions/lead-action'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lead_id:     lead.id,
+          action_type: actionType,
+          note:        actionNote || undefined,
+          due_at:      actionDueAt || undefined,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        toast.error(`Ошибка: ${json.error ?? res.statusText}`)
+      } else {
+        setActions((prev) => [json.data, ...prev])
+        setActionNote('')
+        setActionDueAt('')
+        toast.success(`Действие добавлено: ${ACTION_TYPE_RU[actionType]}`)
+      }
+    } catch {
+      toast.error('Сетевая ошибка при создании действия')
+    } finally {
+      setActionSubmitting(false)
+    }
+  }
+
+  async function handleActionStatus(actionId: string, status: 'done' | 'canceled') {
+    try {
+      const res = await fetch(buildApiUrl('/api/actions/lead-action'), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action_id: actionId, action_status: status }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        toast.error(`Ошибка: ${json.error ?? res.statusText}`)
+      } else {
+        setActions((prev) =>
+          prev.map((a) => (a.action_id === actionId ? json.data : a))
+        )
+      }
+    } catch {
+      toast.error('Сетевая ошибка')
+    }
+  }
 
   async function handleExplainToggle() {
     const next = !explainOpen
@@ -545,6 +621,134 @@ export function LeadDetailPanel({ lead, onClose, onOutcomeSet }: Props) {
             ))}
           </div>
         </div>
+      </div>
+
+      {/* ── Действия менеджера ─────────────────────────────────────────────── */}
+      <div className="p-4 border-t border-border space-y-3">
+        {/* Next planned action */}
+        {(() => {
+          const next = actions.find((a) => a.action_status === 'planned')
+          if (!next) return null
+          const isOverdue = next.due_at && new Date(next.due_at) < new Date()
+          return (
+            <div className={`flex items-start gap-2 px-3 py-2 rounded-lg border text-xs ${
+              isOverdue
+                ? 'border-red-400/40 bg-red-400/5 text-red-400'
+                : 'border-neon-cyan/30 bg-neon-cyan/5 text-foreground/80'
+            }`}>
+              <Zap className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-neon-cyan" />
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-[10px] text-muted-foreground uppercase mb-0.5">Следующее действие</p>
+                <p className="font-semibold">{ACTION_TYPE_RU[next.action_type]}</p>
+                {next.note && <p className="text-[10px] text-muted-foreground/80 mt-0.5 truncate">{next.note}</p>}
+                {next.due_at && (
+                  <p className={`text-[10px] mt-0.5 ${isOverdue ? 'text-red-400 font-medium' : 'text-muted-foreground/70'}`}>
+                    {isOverdue ? 'Просрочено · ' : 'Срок: '}
+                    {formatDateTime(next.due_at)}
+                  </p>
+                )}
+              </div>
+              <div className="flex gap-1 flex-shrink-0">
+                <button
+                  onClick={() => handleActionStatus(next.action_id, 'done')}
+                  className="p-1 rounded text-muted-foreground hover:text-neon-green transition-colors"
+                  title="Выполнено"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => handleActionStatus(next.action_id, 'canceled')}
+                  className="p-1 rounded text-muted-foreground hover:text-red-400 transition-colors"
+                  title="Отменить"
+                >
+                  <Ban className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          )
+        })()}
+
+        {/* Quick action buttons */}
+        <div>
+          <p className="text-[10px] text-muted-foreground mb-1.5 uppercase tracking-wider">Добавить действие</p>
+          <div className="grid grid-cols-3 gap-1 mb-2">
+            {ACTION_TYPES.map((t) => (
+              <button
+                key={t}
+                onClick={() => handleCreateAction(t)}
+                disabled={actionSubmitting}
+                className="px-2 py-1 rounded border border-border text-[10px] font-medium text-muted-foreground hover:text-foreground hover:border-border/80 transition-colors disabled:opacity-40"
+              >
+                {ACTION_TYPE_RU[t]}
+              </button>
+            ))}
+          </div>
+          <div className="space-y-1.5">
+            <input
+              type="text"
+              value={actionNote}
+              onChange={(e) => setActionNote(e.target.value)}
+              placeholder="Заметка к действию (необязательно)"
+              className="w-full bg-secondary border border-border rounded px-2 py-1 text-[11px] text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-neon-cyan/40"
+            />
+            <div className="flex items-center gap-2">
+              <Clock className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+              <input
+                type="datetime-local"
+                value={actionDueAt}
+                onChange={(e) => setActionDueAt(e.target.value)}
+                className="flex-1 bg-secondary border border-border rounded px-2 py-1 text-[11px] text-foreground focus:outline-none focus:border-neon-cyan/40"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Action journal — last 5 */}
+        {(actionsLoading || actions.length > 0) && (
+          <div>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1.5">Журнал действий</p>
+            {actionsLoading ? (
+              <p className="text-[10px] text-muted-foreground/60">Загрузка…</p>
+            ) : (
+              <div className="space-y-1">
+                {actions.slice(0, 5).map((a) => (
+                  <div
+                    key={a.action_id}
+                    className={`flex items-start gap-2 text-[10px] px-2 py-1.5 rounded border ${
+                      a.action_status === 'done'
+                        ? 'border-border/30 bg-secondary/20 text-muted-foreground/50'
+                        : a.action_status === 'canceled'
+                        ? 'border-border/20 bg-transparent text-muted-foreground/40 line-through'
+                        : 'border-border/50 bg-secondary/30 text-foreground/70'
+                    }`}
+                  >
+                    <span className="flex-shrink-0 font-medium min-w-[52px]">{ACTION_TYPE_RU[a.action_type]}</span>
+                    <span className="flex-1 truncate text-muted-foreground/60">{a.note ?? '—'}</span>
+                    <span className="flex-shrink-0 text-muted-foreground/40">{ACTION_STATUS_RU[a.action_status]}</span>
+                    {a.action_status === 'planned' && (
+                      <div className="flex gap-0.5 flex-shrink-0">
+                        <button
+                          onClick={() => handleActionStatus(a.action_id, 'done')}
+                          className="text-muted-foreground/40 hover:text-neon-green transition-colors"
+                          title="Выполнено"
+                        >
+                          <Check className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={() => handleActionStatus(a.action_id, 'canceled')}
+                          className="text-muted-foreground/40 hover:text-red-400 transition-colors"
+                          title="Отменить"
+                        >
+                          <Ban className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </aside>
   )

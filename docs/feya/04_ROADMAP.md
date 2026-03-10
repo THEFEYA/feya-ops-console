@@ -1,24 +1,40 @@
 # FEYA — Roadmap (Phases)
 
-## Phase A — Stability
+## Phase A — Stability ✓
 
-- [ ] Schema drift guardrails (stage/outcome/updated_at)
-- [ ] Stable funnel views
-- [ ] Batch fetching to avoid N+1
+- [x] Schema drift guardrails (stage/outcome/updated_at)
+- [x] Stable funnel views
+- [x] Batch fetching to avoid N+1
 
-## Phase B — Explainability
+## Phase B — Operational visibility ✓
 
-- [ ] RU explanations for all lead kinds
-- [ ] Next-action recommendations
-- [ ] Evidence normalization
+- [x] Stage history views (v_lead_current_stage, v_lead_ever_stage, v_stage_transitions)
+- [x] Stage velocity / bottleneck analytics
+- [x] Source health analytics (Здоровье источников)
+- [x] Schema contract + db-health endpoint
 
-## Phase C — Conversion & Learning loop
+## Phase C — Manager action memory ← текущий
+
+- [x] lead_actions table (DB migration applied)
+- [x] API layer: GET / POST / PATCH /api/actions/lead-action
+- [x] LeadDetailPanel: Следующее действие + Добавить действие + Журнал действий
+- [x] Manager work queue: /queue page with 5 buckets + filter tabs + LeadDetailPanel integration
+
+## Phase D — SLA & queue automation (следующий)
+
+- [ ] SLA rules: escalation if action overdue > N days
+- [ ] Manager assignment (auth.uid per action)
+- [ ] Auto-create follow_up on stage change
+- [ ] Push notifications for overdue actions
+- [ ] Bulk status update
+
+## Phase E — Conversion & Learning loop
 
 - [ ] Conversion by source/event/persona
 - [ ] Precision/noise dashboards
 - [ ] Decision logging -> training signal
 
-## Phase D — Automation
+## Phase F — Automation
 
 - [ ] Contact extraction pipelines
 - [ ] Outreach queue + templates

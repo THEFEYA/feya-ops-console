@@ -15,6 +15,15 @@ Notes:
 
 <!-- Добавляй новые записи сверху, самые свежие первыми -->
 
+## 2026-03-10 — Manager work queue: /queue page + SLA buckets
+
+- Change: Добавлена страница `/queue` («Очередь менеджера») с 5 бакетами: Просрочено, На сегодня, Ждёт ответа, Без следующего действия, Выполнено сегодня. Новый API endpoint `GET /api/actions/queue` агрегирует данные из `lead_actions` + `leads` + `v_lead_current_stage`. Портированы `lib/api/leadActions.ts` и `app/api/actions/lead-action/route.ts` из ветки manager-action-memory (не была смержена в main до этого PR). Обновлён `LeadDetailPanel` с секциями «Следующее действие», «Добавить действие», «Журнал действий». Добавлен пункт «Очередь» в сайдбар.
+- Why: Без очереди менеджер не знает с чего начать рабочий день — нет единого места где видно все просроченные / запланированные / ждущие ответа действия по лидам.
+- Queue rules: overdue = planned + due_at < start of today; today = planned + due_at >= now AND <= end of today; waiting = planned contact/follow_up with NULL due_at; no_action = lead in active stage (shortlisted/approved/qualified/contacted/replied/meeting/proposal) with zero planned actions; done_today = action_status=done + done_at today.
+- Not implemented: SLA escalation, manager assignment (auth.uid), auto-triggers, push notifications, bulk-status.
+- How to verify: `/queue` — отображаются бакеты; фильтры работают; клик на элемент открывает LeadDetailPanel справа; можно добавить действие из панели и оно появится в очереди после обновления.
+- Rollback: Удалить `app/(dashboard)/queue/`, `app/api/actions/queue/route.ts`, `lib/api/leadActions.ts`, `app/api/actions/lead-action/route.ts`, убрать пункт «Очередь» из Sidebar, откатить изменения LeadDetailPanel.
+
 ## 2026-03-09 — Analytics action layer: stage history views + velocity analytics
 
 - Change: Добавлены три query-функции (`getLeadCurrentStage`, `getLeadEverStage`, `getStageTransitions`), зарегистрированы в `/api/sb/query` (три новых allowed names). В `/analytics` добавлены два блока: «Стадии лидов» (toggle текущая/ever-reached + таблица по источникам) и «Скорость воронки» (таблица переходов с median/p75 + таблица зависших лидов >72 ч.). Исправлен баг в `insertLeadStage`: dedup-запрос использовал колонку `id` вместо `outcome_id`. Удалён upsert-fallback в `insertLeadStage` и `setLeadOutcome` (таблица append-only, нет unique constraint на lead_id).
