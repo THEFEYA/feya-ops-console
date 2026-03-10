@@ -10,14 +10,16 @@ import {
   Settings2,
   BookOpen,
   Zap,
+  ListTodo,
 } from 'lucide-react'
 
 const NAV_ITEMS = [
-  { href: '/flow', label: 'Поток', icon: Activity, hint: 'Мониторинг пайплайна' },
-  { href: '/inbox', label: 'Лиды', icon: Inbox, hint: 'Инбокс лидов' },
+  { href: '/flow',    label: 'Поток',    icon: Activity,  hint: 'Мониторинг пайплайна' },
+  { href: '/inbox',   label: 'Лиды',     icon: Inbox,     hint: 'Инбокс лидов' },
+  { href: '/queue',   label: 'Очередь',  icon: ListTodo,  hint: 'Очередь менеджера' },
   { href: '/analytics', label: 'Аналитика', icon: BarChart3, hint: 'Графики и KPI' },
   { href: '/control', label: 'Управление', icon: Settings2, hint: 'Запуск функций' },
-  { href: '/docs', label: 'Справка', icon: BookOpen, hint: 'Документация' },
+  { href: '/docs',    label: 'Справка',  icon: BookOpen,  hint: 'Документация' },
 ]
 
 export function Sidebar() {
