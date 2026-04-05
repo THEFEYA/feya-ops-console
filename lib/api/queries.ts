@@ -1,4 +1,4 @@
-import { createAdminClient } from '../supabase/server'
+ { import { createAdminClient } from '../supabase/server'
 import { type NormalisedLead, type NormalisedRun, normaliseLead, normaliseRun } from '../field-resolver'
 
 export type InboxTab = 'b2b_hot' | 'people_hot' | 'event_review' | 'extract_people'
@@ -41,10 +41,6 @@ function lower(value: unknown): string {
   return str(value).toLowerCase()
 }
 
-function generatedDay(value: unknown): string {
-  return str(value).slice(0, 10) || new Date().toISOString().slice(0, 10)
-}
-
 async function getWorkspace(filters: WorkspaceFilters = {}): Promise<Json> {
   const sb = createAdminClient()
   const { data, error } = await sb.rpc('feya_launch_workspace_snapshot', {
@@ -60,6 +56,10 @@ async function getWorkspace(filters: WorkspaceFilters = {}): Promise<Json> {
   return asObj(data)
 }
 
+export async function getWorkspaceSnapshot(filters: WorkspaceFilters = {}): Promise<Json> {
+  return getWorkspace(filters)
+}
+
 function withLeadShape(row: Json, overrides: Partial<NormalisedLead> = {}): NormalisedLead {
   const base = normaliseLead(row)
   return {
@@ -70,46 +70,98 @@ function withLeadShape(row: Json, overrides: Partial<NormalisedLead> = {}): Norm
 }
 
 function mapApprovalWaveRow(row: Json): NormalisedLead {
+  const title = str(row.username || row.title || row.target_queue_id || 'Approval item')
   return withLeadShape(row, {
     id: str(row.target_queue_id || row.lead_id || row.conversation_id || row.username),
-    title: str(row.title || row.username || row.target_queue_id || '—'),
+    title: title.startsWith('u/') ? `Reddit user ${title}` : `Reddit user u/${title}`,
     url: str(row.url || row.source_url || ''),
     status: str(row.approval_bootstrap_status || row.rollout_policy_status || ''),
     source: str(row.conversation_channel || row.source_slug || 'reddit'),
     source_slug: str(row.conversation_channel || row.source_slug || 'reddit'),
     created_at: str(row.scheduled_for || row.created_at || row.generated_at || ''),
-    snippet: str(row.offer_family_name || row.next_policy_code || row.blocked_reason || ''),
+    snippet: str(row.offer_family_name || row.next_policy_code || row.blocked_reason || row.policy_code || ''),
     warmth: undefined,
     score: undefined,
     country: undefined,
+    username: str(row.username || ''),
   })
 }
 
 function mapDecisionRow(row: Json): NormalisedLead {
   return withLeadShape(row, {
     id: str(row.target_queue_id || row.lead_id || row.conversation_id || row.username),
-    title: str(row.title || row.username || row.command_code || '—'),
+    title: str(row.title || row.username || row.command_code || 'Decision item'),
     url: str(row.url || row.source_url || ''),
     status: str(row.command_mode || row.decision_code || row.command_code || ''),
     source: str(row.source_slug || row.channel || 'reddit'),
     source_slug: str(row.source_slug || row.channel || 'reddit'),
     created_at: str(row.created_at || row.scheduled_for || ''),
-    snippet: str(row.decision_code || row.command_code || ''),
+    snippet: str(row.decision_code || row.command_code || row.policy_code || ''),
     warmth: undefined,
     score: undefined,
     country: undefined,
+    username: str(row.username || ''),
   })
 }
 
-function filterRows(rows: NormalisedLead[], opts: {
-  scoreMin?: number
-  scoreMax?: number
-  warmth?: string
-  source?: string
-  country?: string
-  search?: string
-  status?: string
-} = {}): { rows: NormalisedLead[]; filtersApplied: string[] } {
+function mapMessageRow(row: Json): NormalisedLead {
+  return withLeadShape(row, {
+    id: str(row.target_queue_id || row.touchpoint_id || row.username || row.conversation_id),
+    title: str(row.title || row.username || row.offer_family_name || 'Message preview'),
+    status: str(row.preview_status || row.policy_code || row.step_number || 'preview'),
+    source: str(row.source_slug || row.channel || 'reddit'),
+    source_slug: str(row.source_slug || row.channel || 'reddit'),
+    created_at: str(row.created_at || row.updated_at || ''),
+    snippet: str(row.preview_text || row.approved_text || row.draft_text || ''),
+    warmth: undefined,
+    score: undefined,
+    country: undefined,
+    username: str(row.username || ''),
+  })
+}
+
+function mapReplyRow(row: Json): NormalisedLead {
+  return withLeadShape(row, {
+    id: str(row.conversation_id || row.lead_id || row.username),
+    title: str(row.title || row.username || 'Reply intake'),
+    status: str(row.response_class || row.next_action_label || 'reply'),
+    source: str(row.source_slug || row.channel || 'reddit'),
+    source_slug: str(row.source_slug || row.channel || 'reddit'),
+    created_at: str(row.latest_inbound_at || row.created_at || ''),
+    snippet: str(row.latest_inbound_text || row.reply_summary || row.snippet || ''),
+    warmth: undefined,
+    score: undefined,
+    country: undefined,
+    username: str(row.username || ''),
+  })
+}
+
+function mapSourceRow(row: Json): NormalisedLead {
+  return withLeadShape(row, {
+    id: str(row.lead_id || row.signal_id || row.id || row.url || row.username),
+    title: str(row.title || row.business_name || row.username || 'Source intake'),
+    url: str(row.url || row.source_url || row.business_website || ''),
+    status: str(row.status || row.route_policy_code || row.offer_family_code || 'source_signal'),
+    source: str(row.source_slug || row.source || 'source'),
+    source_slug: str(row.source_slug || row.source || 'source'),
+    created_at: str(row.created_at || row.detected_at || row.generated_at || ''),
+    snippet: str(row.snippet || row.evidence_text || row.match_terms || ''),
+    username: str(row.username || ''),
+  })
+}
+
+function filterRows(
+  rows: NormalisedLead[],
+  opts: {
+    scoreMin?: number
+    scoreMax?: number
+    warmth?: string
+    source?: string
+    country?: string
+    search?: string
+    status?: string
+  } = {},
+): { rows: NormalisedLead[]; filtersApplied: string[] } {
   let next = rows
   const filtersApplied: string[] = []
 
@@ -126,7 +178,7 @@ function filterRows(rows: NormalisedLead[], opts: {
       lower(r.url).includes(q) ||
       lower(r.snippet).includes(q) ||
       lower(r.username).includes(q) ||
-      lower(r.business_name).includes(q)
+      lower(r.business_name).includes(q),
     )
     filtersApplied.push(`search:${opts.search}`)
   }
@@ -150,12 +202,12 @@ function filterRows(rows: NormalisedLead[], opts: {
   }
 
   if (opts.scoreMin !== undefined) {
-    next = next.filter((r) => num(r.score, 0) >= opts.scoreMin!)
+    next = next.filter((r) => num(r.score, 0) >= opts.scoreMin)
     filtersApplied.push(`scoreMin:${opts.scoreMin}`)
   }
 
   if (opts.scoreMax !== undefined) {
-    next = next.filter((r) => num(r.score, 0) <= opts.scoreMax!)
+    next = next.filter((r) => num(r.score, 0) <= opts.scoreMax)
     filtersApplied.push(`scoreMax:${opts.scoreMax}`)
   }
 
@@ -166,14 +218,16 @@ export async function getKpiToday() {
   const ws = await getWorkspace({ limit: 50 })
   const s = asObj(ws.executive_summary)
   return {
-    leads_today: num(s.source_rows_total),
-    leads_count: num(s.source_rows_total),
+    leads_today: num(s.next_approval_wave_total),
+    leads_count: num(s.already_live_ready_total),
     tasks_open: num(s.approval_bootstrap_candidate_total) + num(s.guarded_live_apply_candidate_total),
     errors_24h: 0,
     last_run_at: str(ws.generated_at || null),
     send_ready_total: num(s.send_ready_total),
     already_live_ready_total: num(s.already_live_ready_total),
     next_approval_wave_total: num(s.next_approval_wave_total),
+    reply_rows_total: num(s.reply_rows_total),
+    source_rows_total: num(s.source_rows_total),
   }
 }
 
@@ -188,7 +242,7 @@ export async function getInbox(
     country?: string
     search?: string
     status?: string
-  } = {}
+  } = {},
 ): Promise<{ rows: NormalisedLead[]; _debug: InboxDebug }> {
   const ws = await getWorkspace({ limit: opts.limit ?? 200 })
 
@@ -197,10 +251,10 @@ export async function getInbox(
 
   if (tab === 'b2b_hot') {
     view = 'feya_launch_workspace_snapshot.source_intake.rows'
-    rows = asArr<Json>(asObj(ws.source_intake).rows).map((row) => withLeadShape(row))
+    rows = asArr<Json>(asObj(ws.source_intake).rows).map(mapSourceRow)
   } else if (tab === 'people_hot') {
     view = 'feya_launch_workspace_snapshot.reply_intake.rows'
-    rows = asArr<Json>(asObj(ws.reply_intake).rows).map((row) => withLeadShape(row))
+    rows = asArr<Json>(asObj(ws.reply_intake).rows).map(mapReplyRow)
   } else if (tab === 'event_review') {
     view = 'feya_launch_workspace_snapshot.next_approval_wave.rows'
     rows = asArr<Json>(asObj(ws.next_approval_wave).rows).map(mapApprovalWaveRow)
@@ -261,144 +315,94 @@ export async function getRecentErrors(limit = 50) {
 export async function getPipelineNodeStats() {
   const ws = await getWorkspace({ limit: 50 })
   const s = asObj(ws.executive_summary)
-  const generated_at = str(ws.generated_at)
   return [
-    { id: 'collectors', name: 'source_intake', status: num(s.source_rows_total) > 0 ? 'ok' : 'idle', created_at: generated_at, type: 'collector' },
-    { id: 'leads', name: 'approval_queue', status: num(s.approval_bootstrap_candidate_total) > 0 ? 'queued' : 'idle', created_at: generated_at, type: 'lead' },
-    { id: 'extractors', name: 'reply_intake', status: num(s.reply_rows_total) > 0 ? 'open' : 'idle', created_at: generated_at, type: 'extractor' },
-    { id: 'scoring', name: 'decision_commands', status: num(s.decision_rows_total) > 0 ? 'ok' : 'idle', created_at: generated_at, type: 'signal' },
-    { id: 'outreach', name: 'guarded_live_apply', status: num(s.guarded_live_apply_candidate_total) > 0 ? 'queued' : 'idle', created_at: generated_at, type: 'outreach' },
-    { id: 'digest', name: 'launch_workspace', status: 'ok', created_at: generated_at, type: 'digest' },
-  ]
-}
-
-export async function getLeadAnalyticsRollup(days = 90, _dateFrom?: string, _dateTo?: string) {
-  const ws = await getWorkspace({ limit: Math.min(200, Math.max(30, days)) })
-  const s = asObj(ws.executive_summary)
-  const day = generatedDay(ws.generated_at)
-  return [
-    { day, leads_cnt: num(s.source_rows_total), source_slug: 'workspace', avg_score: 0, avg_intent: 0, avg_reach: 0, max_score: 0 },
-    { day, leads_cnt: num(s.reply_rows_total), source_slug: 'reply_intake', avg_score: 0, avg_intent: 0, avg_reach: 0, max_score: 0 },
-    { day, leads_cnt: num(s.send_ready_total), source_slug: 'send_ready', avg_score: 0, avg_intent: 0, avg_reach: 0, max_score: 0 },
+    { node: 'approval_wave', title: 'Approval Wave', active: num(s.next_approval_wave_total), queued: num(s.approval_bootstrap_candidate_total), errors: 0 },
+    { node: 'live_ready', title: 'Live Ready', active: num(s.already_live_ready_total), queued: num(s.send_ready_total), errors: 0 },
+    { node: 'guarded_apply', title: 'Guarded Apply', active: num(s.guarded_live_apply_candidate_total), queued: num(s.guarded_live_apply_candidate_total), errors: 0 },
+    { node: 'replies', title: 'Replies', active: num(s.reply_rows_total), queued: num(s.reply_rows_total), errors: 0 },
+    { node: 'messages', title: 'Message Preview', active: num(s.message_rows_total), queued: num(s.message_rows_total), errors: 0 },
+    { node: 'decisions', title: 'Decision Commands', active: num(s.decision_rows_total), queued: num(s.decision_rows_total), errors: 0 },
   ]
 }
 
 export async function getLeadAnalytics() {
-  const ws = await getWorkspace({ limit: 100 })
-  return {
-    leads: asArr<Json>(asObj(ws.source_intake).rows),
-    outcomes: [],
-    replies: asArr<Json>(asObj(ws.reply_intake).rows),
-    decisions: asArr<Json>(asObj(ws.decision_command).commands),
-  }
+  const ws = await getWorkspace({ limit: 50 })
+  const s = asObj(ws.executive_summary)
+  return [
+    { metric: 'send_ready_total', value: num(s.send_ready_total) },
+    { metric: 'already_live_ready_total', value: num(s.already_live_ready_total) },
+    { metric: 'approval_bootstrap_candidate_total', value: num(s.approval_bootstrap_candidate_total) },
+    { metric: 'guarded_live_apply_candidate_total', value: num(s.guarded_live_apply_candidate_total) },
+    { metric: 'next_approval_wave_total', value: num(s.next_approval_wave_total) },
+    { metric: 'reply_rows_total', value: num(s.reply_rows_total) },
+  ]
 }
 
-export async function getLeadAnalyticsRollup2(days = 90, dateFrom?: string, dateTo?: string) {
-  return getLeadAnalyticsRollup(days, dateFrom, dateTo)
+export async function getLeadAnalyticsRollup() {
+  return []
 }
 
-export async function getSourceFunnelDaily(days = 30, _dateFrom?: string, _dateTo?: string) {
-  const ws = await getWorkspace({ limit: Math.min(200, Math.max(30, days)) })
-  const sourceRows = asArr<Json>(asObj(ws.source_intake).rows)
-  const bySource = new Map<string, number>()
-  for (const row of sourceRows) {
-    const key = str(row.source_slug || row.source || 'unknown')
-    bySource.set(key, (bySource.get(key) ?? 0) + 1)
-  }
-  const day = generatedDay(ws.generated_at)
-  return Array.from(bySource.entries()).map(([source_slug, leads_captured]) => ({
-    day,
-    source_slug,
-    leads_captured,
-    approved: 0,
-    shortlisted: 0,
-    rejected: 0,
-    qualified: leads_captured,
-    contacted: 0,
-    replied: 0,
-    meeting: 0,
-    proposal: 0,
-    won: 0,
-    lost: 0,
-    conversion_rate: 0,
-  }))
-}
-
-export async function getFunnelBySourceEntity(days = 30) {
-  return getSourceFunnelDaily(days)
+export async function getLeadAnalyticsRollup2() {
+  return []
 }
 
 export async function getKpiTodayCounts() {
-  const kpi = await getKpiToday()
-  return {
-    ...kpi,
-    total: kpi.leads_today ?? 0,
-  }
+  const ws = await getWorkspace({ limit: 50 })
+  const s = asObj(ws.executive_summary)
+  return [{
+    leads_count: num(s.already_live_ready_total),
+    send_ready_total: num(s.send_ready_total),
+    approval_bootstrap_candidate_total: num(s.approval_bootstrap_candidate_total),
+    guarded_live_apply_candidate_total: num(s.guarded_live_apply_candidate_total),
+    reply_rows_total: num(s.reply_rows_total),
+    source_rows_total: num(s.source_rows_total),
+  }]
 }
 
 export async function getLeadExplainRu(leadId: string) {
-  if (!leadId) return null
-  const sb = createAdminClient()
-  const { data, error } = await sb
-    .from('lead_explain_ru')
-    .select('lead_id, ru_summary, ru_explain')
-    .eq('lead_id', leadId)
-    .limit(1)
-    .maybeSingle()
-  if (error) console.error('[getLeadExplainRu]', error.message)
-  return data ?? null
+  return {
+    lead_id: leadId,
+    ru_summary: 'FEYA-native explanation layer для нового ядра ещё не пересобран полностью. На этом шаге используется базовое пояснение из карточки и raw snapshot fields.',
+  }
 }
 
 export async function getUiTermsRu() {
-  const sb = createAdminClient()
-  const { data, error } = await sb
-    .from('ui_terms_ru_v')
-    .select('term, ru, kind')
-    .limit(2000)
-  if (error) console.error('[getUiTermsRu]', error.message)
-  return data ?? []
-}
-
-export async function getStageTransitions() {
-  const ws = await getWorkspace({ limit: 100 })
-  return asArr<Json>(asObj(ws.next_action).rows).map((row) => ({
-    from_stage: str(row.current_stage || row.current_status || 'unknown'),
-    to_stage: str(row.next_action_label || row.next_status || 'unknown'),
-    hours_elapsed: null,
-    source_slug: str(row.source_slug || row.channel || 'reddit'),
-  }))
-}
-
-export async function getLeadCurrentStage() {
-  const ws = await getWorkspace({ limit: 100 })
-  return asArr<Json>(asObj(ws.decision_command).commands).map((row) => ({
-    lead_id: str(row.lead_id || row.target_queue_id || row.conversation_id || ''),
-    source_slug: str(row.source_slug || row.channel || 'reddit'),
-    current_stage: str(row.command_mode || row.decision_code || 'qualified'),
-  }))
-}
-
-export async function getLeadEverStage() {
-  const rows = await getLeadCurrentStage()
-  return rows.map((row) => ({
-    ...row,
-    ever_stage: row.current_stage,
-    rollback_count: 0,
-  }))
+  return [
+    { term: 'approval_wave', ru: 'Approval Wave' },
+    { term: 'decision_queue', ru: 'Команды' },
+    { term: 'next_actions', ru: 'Следующие действия' },
+    { term: 'message_preview', ru: 'Превью сообщений' },
+    { term: 'reply_intake', ru: 'Ответы' },
+  ]
 }
 
 export async function getSchemaKeys() {
-  return {
-    workspace_rpc: [
-      'public.feya_launch_workspace_snapshot',
-      'public.feya_next_approval_wave_snapshot',
-      'public.feya_operator_cockpit_v5_snapshot',
-    ],
-    execution_tables: [
-      'feya_sales.followup_queue',
-      'feya_sales.touchpoints',
-      'feya_sales.approval_logs',
-      'feya_sales.runtime_execution_actions',
-    ],
-  }
+  return []
+}
+
+export async function getSourceFunnelDaily() {
+  const ws = await getWorkspace({ limit: 50 })
+  const s = asObj(ws.executive_summary)
+  const day = new Date().toISOString().slice(5, 10)
+  return [
+    { day, source_slug: 'approval_wave', leads_captured: num(s.next_approval_wave_total), approved: 0, shortlisted: 0, rejected: 0, qualified: 0, contacted: 0, replied: 0, meeting: 0, proposal: 0, won: 0, lost: 0 },
+    { day, source_slug: 'live_ready', leads_captured: num(s.already_live_ready_total), approved: num(s.send_ready_total), shortlisted: 0, rejected: 0, qualified: 0, contacted: 0, replied: 0, meeting: 0, proposal: 0, won: 0, lost: 0 },
+    { day, source_slug: 'reply_intake', leads_captured: num(s.reply_rows_total), approved: 0, shortlisted: 0, rejected: 0, qualified: 0, contacted: 0, replied: num(s.reply_rows_total), meeting: 0, proposal: 0, won: 0, lost: 0 },
+  ]
+}
+
+export async function getFunnelBySourceEntity() {
+  return []
+}
+
+export async function getLeadCurrentStage() {
+  return []
+}
+
+export async function getLeadEverStage() {
+  return []
+}
+
+export async function getStageTransitions() {
+  return []
 }
