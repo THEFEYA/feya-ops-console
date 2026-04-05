@@ -2,6 +2,7 @@ import { createAdminClient } from '../supabase/server'
 import { type NormalisedLead, type NormalisedRun, normaliseLead, normaliseRun } from '../field-resolver'
 
 export type InboxTab = 'b2b_hot' | 'people_hot' | 'event_review' | 'extract_people'
+
 type Json = Record<string, unknown>
 
 type WorkspaceFilters = {
@@ -11,15 +12,40 @@ type WorkspaceFilters = {
   offer_family_code?: string | null
 }
 
-function asObj(v: unknown): Json {
-  return v && typeof v === 'object' ? (v as Json) : {}
+export interface InboxDebug {
+  view: string
+  filtersApplied: string[]
+  orderUsed: string
 }
 
-function asArr<T = Json>(v: unknown): T[] {
-  return Array.isArray(v) ? (v as T[]) : []
+function asObj(value: unknown): Json {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Json) : {}
 }
 
-async function getWorkspace(filters: WorkspaceFilters = {}) {
+function asArr<T = Json>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : []
+}
+
+function str(value: unknown, fallback = ''): string {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  return fallback
+}
+
+function num(value: unknown, fallback = 0): number {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : fallback
+}
+
+function lower(value: unknown): string {
+  return str(value).toLowerCase()
+}
+
+function generatedDay(value: unknown): string {
+  return str(value).slice(0, 10) || new Date().toISOString().slice(0, 10)
+}
+
+async function getWorkspace(filters: WorkspaceFilters = {}): Promise<Json> {
   const sb = createAdminClient()
   const { data, error } = await sb.rpc('feya_launch_workspace_snapshot', {
     p_limit: filters.limit ?? 50,
@@ -29,37 +55,126 @@ async function getWorkspace(filters: WorkspaceFilters = {}) {
   })
   if (error) {
     console.error('[getWorkspace]', error.message)
-    return {} as Json
+    return {}
   }
   return asObj(data)
 }
 
-function patchLead(row: Json, overrides: Partial<NormalisedLead> = {}): NormalisedLead {
+function withLeadShape(row: Json, overrides: Partial<NormalisedLead> = {}): NormalisedLead {
+  const base = normaliseLead(row)
   return {
-    ...normaliseLead(row),
+    ...base,
     ...overrides,
     _raw: row,
   }
+}
+
+function mapApprovalWaveRow(row: Json): NormalisedLead {
+  return withLeadShape(row, {
+    id: str(row.target_queue_id || row.lead_id || row.conversation_id || row.username),
+    title: str(row.title || row.username || row.target_queue_id || '—'),
+    url: str(row.url || row.source_url || ''),
+    status: str(row.approval_bootstrap_status || row.rollout_policy_status || ''),
+    source: str(row.conversation_channel || row.source_slug || 'reddit'),
+    source_slug: str(row.conversation_channel || row.source_slug || 'reddit'),
+    created_at: str(row.scheduled_for || row.created_at || row.generated_at || ''),
+    snippet: str(row.offer_family_name || row.next_policy_code || row.blocked_reason || ''),
+    warmth: undefined,
+    score: undefined,
+    country: undefined,
+  })
+}
+
+function mapDecisionRow(row: Json): NormalisedLead {
+  return withLeadShape(row, {
+    id: str(row.target_queue_id || row.lead_id || row.conversation_id || row.username),
+    title: str(row.title || row.username || row.command_code || '—'),
+    url: str(row.url || row.source_url || ''),
+    status: str(row.command_mode || row.decision_code || row.command_code || ''),
+    source: str(row.source_slug || row.channel || 'reddit'),
+    source_slug: str(row.source_slug || row.channel || 'reddit'),
+    created_at: str(row.created_at || row.scheduled_for || ''),
+    snippet: str(row.decision_code || row.command_code || ''),
+    warmth: undefined,
+    score: undefined,
+    country: undefined,
+  })
+}
+
+function filterRows(rows: NormalisedLead[], opts: {
+  scoreMin?: number
+  scoreMax?: number
+  warmth?: string
+  source?: string
+  country?: string
+  search?: string
+  status?: string
+} = {}): { rows: NormalisedLead[]; filtersApplied: string[] } {
+  let next = rows
+  const filtersApplied: string[] = []
+
+  if (opts.source) {
+    const q = opts.source.toLowerCase()
+    next = next.filter((r) => lower(r.source_slug || r.source).includes(q))
+    filtersApplied.push(`source:${opts.source}`)
+  }
+
+  if (opts.search) {
+    const q = opts.search.toLowerCase()
+    next = next.filter((r) =>
+      lower(r.title).includes(q) ||
+      lower(r.url).includes(q) ||
+      lower(r.snippet).includes(q) ||
+      lower(r.username).includes(q) ||
+      lower(r.business_name).includes(q)
+    )
+    filtersApplied.push(`search:${opts.search}`)
+  }
+
+  if (opts.status) {
+    const q = opts.status.toLowerCase()
+    next = next.filter((r) => lower(r.status).includes(q))
+    filtersApplied.push(`status:${opts.status}`)
+  }
+
+  if (opts.country) {
+    const q = opts.country.toLowerCase()
+    next = next.filter((r) => lower(r.country).includes(q))
+    filtersApplied.push(`country:${opts.country}`)
+  }
+
+  if (opts.warmth) {
+    const q = opts.warmth.toLowerCase()
+    next = next.filter((r) => lower(r.warmth).includes(q))
+    filtersApplied.push(`warmth:${opts.warmth}`)
+  }
+
+  if (opts.scoreMin !== undefined) {
+    next = next.filter((r) => num(r.score, 0) >= opts.scoreMin!)
+    filtersApplied.push(`scoreMin:${opts.scoreMin}`)
+  }
+
+  if (opts.scoreMax !== undefined) {
+    next = next.filter((r) => num(r.score, 0) <= opts.scoreMax!)
+    filtersApplied.push(`scoreMax:${opts.scoreMax}`)
+  }
+
+  return { rows: next, filtersApplied }
 }
 
 export async function getKpiToday() {
   const ws = await getWorkspace({ limit: 50 })
   const s = asObj(ws.executive_summary)
   return {
-    leads_today: Number(s.source_rows_total ?? 0),
-    tasks_open: Number(s.approval_bootstrap_candidate_total ?? 0) + Number(s.guarded_live_apply_candidate_total ?? 0),
+    leads_today: num(s.source_rows_total),
+    leads_count: num(s.source_rows_total),
+    tasks_open: num(s.approval_bootstrap_candidate_total) + num(s.guarded_live_apply_candidate_total),
     errors_24h: 0,
-    last_run_at: ws.generated_at ?? null,
-    send_ready_total: Number(s.send_ready_total ?? 0),
-    already_live_ready_total: Number(s.already_live_ready_total ?? 0),
-    next_approval_wave_total: Number(s.next_approval_wave_total ?? 0),
+    last_run_at: str(ws.generated_at || null),
+    send_ready_total: num(s.send_ready_total),
+    already_live_ready_total: num(s.already_live_ready_total),
+    next_approval_wave_total: num(s.next_approval_wave_total),
   }
-}
-
-export interface InboxDebug {
-  view: string
-  filtersApplied: string[]
-  orderUsed: string
 }
 
 export async function getInbox(
@@ -76,81 +191,33 @@ export async function getInbox(
   } = {}
 ): Promise<{ rows: NormalisedLead[]; _debug: InboxDebug }> {
   const ws = await getWorkspace({ limit: opts.limit ?? 200 })
-  const filtersApplied: string[] = []
 
-  let rawRows: Json[] = []
   let view = ''
+  let rows: NormalisedLead[] = []
 
   if (tab === 'b2b_hot') {
     view = 'feya_launch_workspace_snapshot.source_intake.rows'
-    rawRows = asArr<Json>(asObj(ws.source_intake).rows)
+    rows = asArr<Json>(asObj(ws.source_intake).rows).map((row) => withLeadShape(row))
   } else if (tab === 'people_hot') {
     view = 'feya_launch_workspace_snapshot.reply_intake.rows'
-    rawRows = asArr<Json>(asObj(ws.reply_intake).rows)
+    rows = asArr<Json>(asObj(ws.reply_intake).rows).map((row) => withLeadShape(row))
   } else if (tab === 'event_review') {
     view = 'feya_launch_workspace_snapshot.next_approval_wave.rows'
-    rawRows = asArr<Json>(asObj(ws.next_approval_wave).rows)
+    rows = asArr<Json>(asObj(ws.next_approval_wave).rows).map(mapApprovalWaveRow)
   } else {
     view = 'feya_launch_workspace_snapshot.decision_command.commands'
-    rawRows = asArr<Json>(asObj(ws.decision_command).commands)
+    rows = asArr<Json>(asObj(ws.decision_command).commands).map(mapDecisionRow)
   }
 
-  let rows = rawRows.map((row) => {
-    if (tab === 'event_review') {
-      return patchLead(row, {
-        id: String(row.target_queue_id ?? row.lead_id ?? ''),
-        title: String(row.username ?? row.title ?? row.target_queue_id ?? '—'),
-        source: String(row.conversation_channel ?? row.source_slug ?? 'reddit'),
-        source_slug: String(row.conversation_channel ?? row.source_slug ?? 'reddit'),
-        status: String(row.approval_bootstrap_status ?? row.rollout_policy_status ?? ''),
-      })
-    }
-    if (tab === 'extract_people') {
-      return patchLead(row, {
-        id: String(row.target_queue_id ?? row.lead_id ?? ''),
-        title: String(row.username ?? row.command_code ?? row.target_queue_id ?? '—'),
-        source: String(row.source_slug ?? row.channel ?? 'reddit'),
-        source_slug: String(row.source_slug ?? row.channel ?? 'reddit'),
-        status: String(row.command_mode ?? row.decision_code ?? ''),
-      })
-    }
-    return patchLead(row)
-  })
-
-  if (opts.source) {
-    const q = opts.source.toLowerCase()
-    rows = rows.filter((r) => String(r.source_slug ?? '').toLowerCase().includes(q))
-    filtersApplied.push(`source:${opts.source}`)
-  }
-  if (opts.search) {
-    const q = opts.search.toLowerCase()
-    rows = rows.filter((r) =>
-      String(r.title ?? '').toLowerCase().includes(q) ||
-      String(r.url ?? '').toLowerCase().includes(q) ||
-      String(r.snippet ?? '').toLowerCase().includes(q)
-    )
-    filtersApplied.push(`search:${opts.search}`)
-  }
-  if (opts.status) {
-    const q = opts.status.toLowerCase()
-    rows = rows.filter((r) => String(r.status ?? '').toLowerCase().includes(q))
-    filtersApplied.push(`status:${opts.status}`)
-  }
-  if (opts.country) {
-    const q = opts.country.toLowerCase()
-    rows = rows.filter((r) => String((r as Json).country ?? '').toLowerCase().includes(q))
-    filtersApplied.push(`country:${opts.country}`)
-  }
-  if (opts.scoreMin !== undefined) rows = rows.filter((r) => Number(r.score ?? 0) >= opts.scoreMin!)
-  if (opts.scoreMax !== undefined) rows = rows.filter((r) => Number(r.score ?? 0) <= opts.scoreMax!)
-  if (opts.warmth) {
-    const q = opts.warmth.toLowerCase()
-    rows = rows.filter((r) => String(r.warmth ?? '').toLowerCase().includes(q))
-  }
+  const filtered = filterRows(rows, opts)
 
   return {
-    rows,
-    _debug: { view, filtersApplied, orderUsed: 'workspace_snapshot' },
+    rows: filtered.rows,
+    _debug: {
+      view,
+      filtersApplied: filtered.filtersApplied,
+      orderUsed: 'workspace_snapshot',
+    },
   }
 }
 
@@ -161,19 +228,22 @@ export async function getRunsRecent(limit = 200): Promise<NormalisedRun[]> {
     .select('*')
     .order('created_at', { ascending: false })
     .limit(limit)
-  if (error) console.error('[getRunsRecent]', error.message)
-  return (data ?? []).map(normaliseRun)
+  if (error) {
+    console.error('[getRunsRecent]', error.message)
+    return []
+  }
+  return asArr<Json>(data).map((row) => normaliseRun(row))
 }
 
 export async function getTasksStats() {
   const ws = await getWorkspace({ limit: 50 })
   const s = asObj(ws.executive_summary)
   return {
-    open: Number(s.approval_bootstrap_candidate_total ?? 0),
-    queued: Number(s.guarded_live_apply_candidate_total ?? 0),
+    open: num(s.approval_bootstrap_candidate_total),
+    queued: num(s.guarded_live_apply_candidate_total),
     error: 0,
     failed: 0,
-    ready: Number(s.send_ready_total ?? 0),
+    ready: num(s.send_ready_total),
   }
 }
 
@@ -191,11 +261,25 @@ export async function getRecentErrors(limit = 50) {
 export async function getPipelineNodeStats() {
   const ws = await getWorkspace({ limit: 50 })
   const s = asObj(ws.executive_summary)
+  const generated_at = str(ws.generated_at)
   return [
-    { name: 'approval', status: 'open', count: Number(s.approval_bootstrap_candidate_total ?? 0), created_at: ws.generated_at },
-    { name: 'execution', status: 'queued', count: Number(s.guarded_live_apply_candidate_total ?? 0), created_at: ws.generated_at },
-    { name: 'ready', status: 'ok', count: Number(s.send_ready_total ?? 0), created_at: ws.generated_at },
-    { name: 'reply_intake', status: 'open', count: Number(s.reply_rows_total ?? 0), created_at: ws.generated_at },
+    { id: 'collectors', name: 'source_intake', status: num(s.source_rows_total) > 0 ? 'ok' : 'idle', created_at: generated_at, type: 'collector' },
+    { id: 'leads', name: 'approval_queue', status: num(s.approval_bootstrap_candidate_total) > 0 ? 'queued' : 'idle', created_at: generated_at, type: 'lead' },
+    { id: 'extractors', name: 'reply_intake', status: num(s.reply_rows_total) > 0 ? 'open' : 'idle', created_at: generated_at, type: 'extractor' },
+    { id: 'scoring', name: 'decision_commands', status: num(s.decision_rows_total) > 0 ? 'ok' : 'idle', created_at: generated_at, type: 'signal' },
+    { id: 'outreach', name: 'guarded_live_apply', status: num(s.guarded_live_apply_candidate_total) > 0 ? 'queued' : 'idle', created_at: generated_at, type: 'outreach' },
+    { id: 'digest', name: 'launch_workspace', status: 'ok', created_at: generated_at, type: 'digest' },
+  ]
+}
+
+export async function getLeadAnalyticsRollup(days = 90, _dateFrom?: string, _dateTo?: string) {
+  const ws = await getWorkspace({ limit: Math.min(200, Math.max(30, days)) })
+  const s = asObj(ws.executive_summary)
+  const day = generatedDay(ws.generated_at)
+  return [
+    { day, leads_cnt: num(s.source_rows_total), source_slug: 'workspace', avg_score: 0, avg_intent: 0, avg_reach: 0, max_score: 0 },
+    { day, leads_cnt: num(s.reply_rows_total), source_slug: 'reply_intake', avg_score: 0, avg_intent: 0, avg_reach: 0, max_score: 0 },
+    { day, leads_cnt: num(s.send_ready_total), source_slug: 'send_ready', avg_score: 0, avg_intent: 0, avg_reach: 0, max_score: 0 },
   ]
 }
 
@@ -209,23 +293,47 @@ export async function getLeadAnalytics() {
   }
 }
 
-export async function getLeadAnalyticsRollup(days = 90, _dateFrom?: string, _dateTo?: string) {
-  const ws = await getWorkspace({ limit: Math.min(200, Math.max(30, days)) })
-  const s = asObj(ws.executive_summary)
-  const day = String(ws.generated_at ?? '').slice(0, 10)
-  return [
-    { day, metric: 'send_ready_total', leads_cnt: Number(s.send_ready_total ?? 0) },
-    { day, metric: 'approval_bootstrap_candidate_total', leads_cnt: Number(s.approval_bootstrap_candidate_total ?? 0) },
-    { day, metric: 'guarded_live_apply_candidate_total', leads_cnt: Number(s.guarded_live_apply_candidate_total ?? 0) },
-  ]
-}
-
 export async function getLeadAnalyticsRollup2(days = 90, dateFrom?: string, dateTo?: string) {
   return getLeadAnalyticsRollup(days, dateFrom, dateTo)
 }
 
+export async function getSourceFunnelDaily(days = 30, _dateFrom?: string, _dateTo?: string) {
+  const ws = await getWorkspace({ limit: Math.min(200, Math.max(30, days)) })
+  const sourceRows = asArr<Json>(asObj(ws.source_intake).rows)
+  const bySource = new Map<string, number>()
+  for (const row of sourceRows) {
+    const key = str(row.source_slug || row.source || 'unknown')
+    bySource.set(key, (bySource.get(key) ?? 0) + 1)
+  }
+  const day = generatedDay(ws.generated_at)
+  return Array.from(bySource.entries()).map(([source_slug, leads_captured]) => ({
+    day,
+    source_slug,
+    leads_captured,
+    approved: 0,
+    shortlisted: 0,
+    rejected: 0,
+    qualified: leads_captured,
+    contacted: 0,
+    replied: 0,
+    meeting: 0,
+    proposal: 0,
+    won: 0,
+    lost: 0,
+    conversion_rate: 0,
+  }))
+}
+
+export async function getFunnelBySourceEntity(days = 30) {
+  return getSourceFunnelDaily(days)
+}
+
 export async function getKpiTodayCounts() {
-  return getKpiToday()
+  const kpi = await getKpiToday()
+  return {
+    ...kpi,
+    total: kpi.leads_today ?? 0,
+  }
 }
 
 export async function getLeadExplainRu(leadId: string) {
@@ -251,62 +359,46 @@ export async function getUiTermsRu() {
   return data ?? []
 }
 
-export async function getSourceFunnelDaily(days = 30, _dateFrom?: string, _dateTo?: string) {
-  const ws = await getWorkspace({ limit: Math.min(200, Math.max(30, days)) })
-  const sourceRows = asArr<Json>(asObj(ws.source_intake).rows)
-  const counts = new Map<string, number>()
-  for (const row of sourceRows) {
-    const key = String(row.source_slug ?? row.source ?? 'unknown')
-    counts.set(key, (counts.get(key) ?? 0) + 1)
-  }
-  const day = String(ws.generated_at ?? '').slice(0, 10)
-  return Array.from(counts.entries()).map(([source_slug, leads_captured]) => ({
-    day,
-    source_slug,
-    leads_captured,
-    approved: 0,
-    shortlisted: 0,
-    rejected: 0,
-    qualified: 0,
-    contacted: 0,
-    replied: 0,
-    meeting: 0,
-    proposal: 0,
-    won: 0,
-    lost: 0,
+export async function getStageTransitions() {
+  const ws = await getWorkspace({ limit: 100 })
+  return asArr<Json>(asObj(ws.next_action).rows).map((row) => ({
+    from_stage: str(row.current_stage || row.current_status || 'unknown'),
+    to_stage: str(row.next_action_label || row.next_status || 'unknown'),
+    hours_elapsed: null,
+    source_slug: str(row.source_slug || row.channel || 'reddit'),
   }))
-}
-
-export async function getFunnelBySourceEntity(days = 30) {
-  return getSourceFunnelDaily(days)
 }
 
 export async function getLeadCurrentStage() {
   const ws = await getWorkspace({ limit: 100 })
-  return asArr<Json>(asObj(ws.decision_command).commands).map((r) => ({
-    lead_id: r.lead_id ?? r.target_queue_id,
-    source_slug: r.source_slug ?? r.channel ?? 'reddit',
-    current_stage: r.command_mode ?? r.decision_code ?? 'unknown',
+  return asArr<Json>(asObj(ws.decision_command).commands).map((row) => ({
+    lead_id: str(row.lead_id || row.target_queue_id || row.conversation_id || ''),
+    source_slug: str(row.source_slug || row.channel || 'reddit'),
+    current_stage: str(row.command_mode || row.decision_code || 'qualified'),
   }))
 }
 
 export async function getLeadEverStage() {
-  return getLeadCurrentStage()
-}
-
-export async function getStageTransitions() {
-  const ws = await getWorkspace({ limit: 50 })
-  return asArr<Json>(asObj(ws.next_action).rows).map((r) => ({
-    from_stage: r.current_stage ?? r.current_status ?? 'unknown',
-    to_stage: r.next_action_label ?? r.next_status ?? 'unknown',
-    hours_elapsed: null,
-    source_slug: r.source_slug ?? r.channel ?? 'reddit',
+  const rows = await getLeadCurrentStage()
+  return rows.map((row) => ({
+    ...row,
+    ever_stage: row.current_stage,
+    rollback_count: 0,
   }))
 }
 
 export async function getSchemaKeys() {
   return {
-    workspace_rpc: ['public.feya_launch_workspace_snapshot', 'public.feya_next_approval_wave_snapshot', 'public.feya_operator_cockpit_v5_snapshot'],
-    execution_tables: ['feya_sales.followup_queue', 'feya_sales.touchpoints', 'feya_sales.approval_logs', 'feya_sales.runtime_execution_actions'],
+    workspace_rpc: [
+      'public.feya_launch_workspace_snapshot',
+      'public.feya_next_approval_wave_snapshot',
+      'public.feya_operator_cockpit_v5_snapshot',
+    ],
+    execution_tables: [
+      'feya_sales.followup_queue',
+      'feya_sales.touchpoints',
+      'feya_sales.approval_logs',
+      'feya_sales.runtime_execution_actions',
+    ],
   }
 }
