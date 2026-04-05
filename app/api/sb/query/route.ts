@@ -50,20 +50,27 @@ const ALLOWED_QUERIES = [
 
 type QueryName = (typeof ALLOWED_QUERIES)[number]
 
+function toNumber(value: string | null, fallback: number): number {
+  if (value === null || value === '') return fallback
+  const n = Number(value)
+  return Number.isFinite(n) ? n : fallback
+}
+
 export async function GET(req: NextRequest) {
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return Response.json(
       { error: 'Server misconfiguration: missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY' },
-      { status: 500 }
+      { status: 500 },
     )
   }
 
   const authorized = await authorizeRequest(req)
   if (!authorized) return unauthorizedResponse()
 
-  const name = req.nextUrl.searchParams.get('name') as QueryName | null
+  const rawName = req.nextUrl.searchParams.get('name')
+  const name = rawName as QueryName | null
   if (!name || !ALLOWED_QUERIES.includes(name)) {
-    return Response.json({ error: `Unknown query: ${name}` }, { status: 400 })
+    return Response.json({ error: `Unknown query: ${rawName}` }, { status: 400 })
   }
 
   try {
@@ -78,13 +85,9 @@ export async function GET(req: NextRequest) {
       case 'inbox': {
         const tab = (req.nextUrl.searchParams.get('tab') ?? 'b2b_hot') as InboxTab
         const opts = {
-          limit: Number(req.nextUrl.searchParams.get('limit') ?? 200),
-          scoreMin: req.nextUrl.searchParams.get('scoreMin')
-            ? Number(req.nextUrl.searchParams.get('scoreMin'))
-            : undefined,
-          scoreMax: req.nextUrl.searchParams.get('scoreMax')
-            ? Number(req.nextUrl.searchParams.get('scoreMax'))
-            : undefined,
+          limit: toNumber(req.nextUrl.searchParams.get('limit'), 200),
+          scoreMin: req.nextUrl.searchParams.get('scoreMin') ? toNumber(req.nextUrl.searchParams.get('scoreMin'), 0) : undefined,
+          scoreMax: req.nextUrl.searchParams.get('scoreMax') ? toNumber(req.nextUrl.searchParams.get('scoreMax'), 0) : undefined,
           warmth: req.nextUrl.searchParams.get('warmth') ?? undefined,
           source: req.nextUrl.searchParams.get('source') ?? undefined,
           country: req.nextUrl.searchParams.get('country') ?? undefined,
@@ -96,7 +99,7 @@ export async function GET(req: NextRequest) {
       }
 
       case 'runs_recent':
-        data = await getRunsRecent(Number(req.nextUrl.searchParams.get('limit') ?? 200))
+        data = await getRunsRecent(toNumber(req.nextUrl.searchParams.get('limit'), 200))
         break
 
       case 'tasks_stats':
@@ -104,7 +107,7 @@ export async function GET(req: NextRequest) {
         break
 
       case 'recent_errors':
-        data = await getRecentErrors(50)
+        data = await getRecentErrors(toNumber(req.nextUrl.searchParams.get('limit'), 50))
         break
 
       case 'pipeline_stats':
@@ -116,9 +119,7 @@ export async function GET(req: NextRequest) {
         break
 
       case 'lead_analytics_rollup': {
-        const days = req.nextUrl.searchParams.get('limit')
-          ? Number(req.nextUrl.searchParams.get('limit'))
-          : 90
+        const days = toNumber(req.nextUrl.searchParams.get('limit'), 90)
         const dateFrom = req.nextUrl.searchParams.get('date_from') ?? undefined
         const dateTo = req.nextUrl.searchParams.get('date_to') ?? undefined
         data = await getLeadAnalyticsRollup(days, dateFrom, dateTo)
@@ -126,9 +127,7 @@ export async function GET(req: NextRequest) {
       }
 
       case 'lead_analytics_rollup2': {
-        const days = req.nextUrl.searchParams.get('limit')
-          ? Number(req.nextUrl.searchParams.get('limit'))
-          : 90
+        const days = toNumber(req.nextUrl.searchParams.get('limit'), 90)
         const dateFrom = req.nextUrl.searchParams.get('date_from') ?? undefined
         const dateTo = req.nextUrl.searchParams.get('date_to') ?? undefined
         data = await getLeadAnalyticsRollup2(days, dateFrom, dateTo)
@@ -139,11 +138,9 @@ export async function GET(req: NextRequest) {
         data = await getKpiTodayCounts()
         break
 
-      case 'lead_explain_ru': {
-        const leadId = req.nextUrl.searchParams.get('lead_id') ?? ''
-        data = await getLeadExplainRu(leadId)
+      case 'lead_explain_ru':
+        data = await getLeadExplainRu(req.nextUrl.searchParams.get('lead_id') ?? '')
         break
-      }
 
       case 'ui_terms_ru':
         data = await getUiTermsRu()
@@ -157,9 +154,7 @@ export async function GET(req: NextRequest) {
         break
 
       case 'v_source_funnel_daily': {
-        const days = req.nextUrl.searchParams.get('limit')
-          ? Number(req.nextUrl.searchParams.get('limit'))
-          : 30
+        const days = toNumber(req.nextUrl.searchParams.get('limit'), 30)
         const dateFrom = req.nextUrl.searchParams.get('date_from') ?? undefined
         const dateTo = req.nextUrl.searchParams.get('date_to') ?? undefined
         data = await getSourceFunnelDaily(days, dateFrom, dateTo)
@@ -167,9 +162,7 @@ export async function GET(req: NextRequest) {
       }
 
       case 'v_funnel_by_source_entity': {
-        const days = req.nextUrl.searchParams.get('limit')
-          ? Number(req.nextUrl.searchParams.get('limit'))
-          : 30
+        const days = toNumber(req.nextUrl.searchParams.get('limit'), 30)
         data = await getFunnelBySourceEntity(days)
         break
       }
