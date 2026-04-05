@@ -1,4 +1,4 @@
- { import { createAdminClient } from '../supabase/server'
+import { createAdminClient } from '../supabase/server'
 import { type NormalisedLead, type NormalisedRun, normaliseLead, normaliseRun } from '../field-resolver'
 
 export type InboxTab = 'b2b_hot' | 'people_hot' | 'event_review' | 'extract_people'
