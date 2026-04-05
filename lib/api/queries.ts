@@ -1,20 +1,59 @@
 import { createAdminClient } from '../supabase/server'
-import { NormalisedLead, NormalisedRun, normaliseLead, normaliseRun } from '../field-resolver'
+import { type NormalisedLead, type NormalisedRun, normaliseLead, normaliseRun } from '../field-resolver'
 
 export type InboxTab = 'b2b_hot' | 'people_hot' | 'event_review' | 'extract_people'
+type Json = Record<string, unknown>
 
-const INBOX_VIEW_MAP: Record<InboxTab, string> = {
-  b2b_hot: 'inbox_b2b_hot_enriched',
-  people_hot: 'inbox_people_hot_enriched',
-  event_review: 'inbox_event_review_enriched',
-  extract_people: 'inbox_extract_people_enriched',
+type WorkspaceFilters = {
+  limit?: number
+  channel?: string | null
+  avatar_code?: string | null
+  offer_family_code?: string | null
+}
+
+function asObj(v: unknown): Json {
+  return v && typeof v === 'object' ? (v as Json) : {}
+}
+
+function asArr<T = Json>(v: unknown): T[] {
+  return Array.isArray(v) ? (v as T[]) : []
+}
+
+async function getWorkspace(filters: WorkspaceFilters = {}) {
+  const sb = createAdminClient()
+  const { data, error } = await sb.rpc('feya_launch_workspace_snapshot', {
+    p_limit: filters.limit ?? 50,
+    p_channel: filters.channel ?? 'reddit',
+    p_avatar_code: filters.avatar_code ?? null,
+    p_offer_family_code: filters.offer_family_code ?? null,
+  })
+  if (error) {
+    console.error('[getWorkspace]', error.message)
+    return {} as Json
+  }
+  return asObj(data)
+}
+
+function patchLead(row: Json, overrides: Partial<NormalisedLead> = {}): NormalisedLead {
+  return {
+    ...normaliseLead(row),
+    ...overrides,
+    _raw: row,
+  }
 }
 
 export async function getKpiToday() {
-  const sb = createAdminClient()
-  const { data, error } = await sb.from('v_kpi_today').select('*').limit(1).maybeSingle()
-  if (error) console.error('[getKpiToday]', error.message)
-  return data ?? {}
+  const ws = await getWorkspace({ limit: 50 })
+  const s = asObj(ws.executive_summary)
+  return {
+    leads_today: Number(s.source_rows_total ?? 0),
+    tasks_open: Number(s.approval_bootstrap_candidate_total ?? 0) + Number(s.guarded_live_apply_candidate_total ?? 0),
+    errors_24h: 0,
+    last_run_at: ws.generated_at ?? null,
+    send_ready_total: Number(s.send_ready_total ?? 0),
+    already_live_ready_total: Number(s.already_live_ready_total ?? 0),
+    next_approval_wave_total: Number(s.next_approval_wave_total ?? 0),
+  }
 }
 
 export interface InboxDebug {
@@ -36,45 +75,82 @@ export async function getInbox(
     status?: string
   } = {}
 ): Promise<{ rows: NormalisedLead[]; _debug: InboxDebug }> {
-  const sb = createAdminClient()
-  const view = INBOX_VIEW_MAP[tab]
-  const limit = opts.limit ?? 200
-
-  // Only source and search are applied server-side; warmth/status/score are done client-side
-  // to avoid zeroing out results when columns differ between views
+  const ws = await getWorkspace({ limit: opts.limit ?? 200 })
   const filtersApplied: string[] = []
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function withFilters(q: any) {
-    if (opts.source) { q = q.ilike('source_slug', `%${opts.source}%`); if (!filtersApplied.includes(`source:${opts.source}`)) filtersApplied.push(`source:${opts.source}`) }
-    if (opts.search) { q = q.or(`title.ilike.%${opts.search}%,url.ilike.%${opts.search}%`); if (!filtersApplied.includes(`search:${opts.search}`)) filtersApplied.push(`search:${opts.search}`) }
-    return q
+
+  let rawRows: Json[] = []
+  let view = ''
+
+  if (tab === 'b2b_hot') {
+    view = 'feya_launch_workspace_snapshot.source_intake.rows'
+    rawRows = asArr<Json>(asObj(ws.source_intake).rows)
+  } else if (tab === 'people_hot') {
+    view = 'feya_launch_workspace_snapshot.reply_intake.rows'
+    rawRows = asArr<Json>(asObj(ws.reply_intake).rows)
+  } else if (tab === 'event_review') {
+    view = 'feya_launch_workspace_snapshot.next_approval_wave.rows'
+    rawRows = asArr<Json>(asObj(ws.next_approval_wave).rows)
+  } else {
+    view = 'feya_launch_workspace_snapshot.decision_command.commands'
+    rawRows = asArr<Json>(asObj(ws.decision_command).commands)
   }
 
-  // Tier 1: order by created_at
-  let orderUsed = 'created_at'
-  let { data, error } = await withFilters(
-    sb.from(view).select('*').order('created_at', { ascending: false }).limit(limit)
-  )
+  let rows = rawRows.map((row) => {
+    if (tab === 'event_review') {
+      return patchLead(row, {
+        id: String(row.target_queue_id ?? row.lead_id ?? ''),
+        title: String(row.username ?? row.title ?? row.target_queue_id ?? '—'),
+        source: String(row.conversation_channel ?? row.source_slug ?? 'reddit'),
+        source_slug: String(row.conversation_channel ?? row.source_slug ?? 'reddit'),
+        status: String(row.approval_bootstrap_status ?? row.rollout_policy_status ?? ''),
+      })
+    }
+    if (tab === 'extract_people') {
+      return patchLead(row, {
+        id: String(row.target_queue_id ?? row.lead_id ?? ''),
+        title: String(row.username ?? row.command_code ?? row.target_queue_id ?? '—'),
+        source: String(row.source_slug ?? row.channel ?? 'reddit'),
+        source_slug: String(row.source_slug ?? row.channel ?? 'reddit'),
+        status: String(row.command_mode ?? row.decision_code ?? ''),
+      })
+    }
+    return patchLead(row)
+  })
 
-  // Tier 2: created_at missing — try task_created_at
-  if (error?.message.includes('created_at') && error.message.includes('does not exist')) {
-    orderUsed = 'task_created_at'
-    ;({ data, error } = await withFilters(
-      sb.from(view).select('*').order('task_created_at', { ascending: false }).limit(limit)
-    ))
+  if (opts.source) {
+    const q = opts.source.toLowerCase()
+    rows = rows.filter((r) => String(r.source_slug ?? '').toLowerCase().includes(q))
+    filtersApplied.push(`source:${opts.source}`)
   }
-
-  // Tier 3: task_created_at missing too — no ordering
-  if (error?.message.includes('task_created_at') && error.message.includes('does not exist')) {
-    orderUsed = 'none'
-    ;({ data, error } = await withFilters(sb.from(view).select('*').limit(limit)))
+  if (opts.search) {
+    const q = opts.search.toLowerCase()
+    rows = rows.filter((r) =>
+      String(r.title ?? '').toLowerCase().includes(q) ||
+      String(r.url ?? '').toLowerCase().includes(q) ||
+      String(r.snippet ?? '').toLowerCase().includes(q)
+    )
+    filtersApplied.push(`search:${opts.search}`)
   }
-
-  if (error) console.error(`[getInbox:${tab}]`, error.message)
+  if (opts.status) {
+    const q = opts.status.toLowerCase()
+    rows = rows.filter((r) => String(r.status ?? '').toLowerCase().includes(q))
+    filtersApplied.push(`status:${opts.status}`)
+  }
+  if (opts.country) {
+    const q = opts.country.toLowerCase()
+    rows = rows.filter((r) => String((r as Json).country ?? '').toLowerCase().includes(q))
+    filtersApplied.push(`country:${opts.country}`)
+  }
+  if (opts.scoreMin !== undefined) rows = rows.filter((r) => Number(r.score ?? 0) >= opts.scoreMin!)
+  if (opts.scoreMax !== undefined) rows = rows.filter((r) => Number(r.score ?? 0) <= opts.scoreMax!)
+  if (opts.warmth) {
+    const q = opts.warmth.toLowerCase()
+    rows = rows.filter((r) => String(r.warmth ?? '').toLowerCase().includes(q))
+  }
 
   return {
-    rows: (data ?? []).map(normaliseLead),
-    _debug: { view, filtersApplied, orderUsed },
+    rows,
+    _debug: { view, filtersApplied, orderUsed: 'workspace_snapshot' },
   }
 }
 
@@ -90,100 +166,66 @@ export async function getRunsRecent(limit = 200): Promise<NormalisedRun[]> {
 }
 
 export async function getTasksStats() {
-  const sb = createAdminClient()
-  const { data, error } = await sb.from('tasks').select('status').limit(2000)
-  if (error) console.error('[getTasksStats]', error.message)
-  const rows = data ?? []
-  const counts: Record<string, number> = {}
-  for (const r of rows) {
-    const s = (r as Record<string, string>).status ?? 'unknown'
-    counts[s] = (counts[s] ?? 0) + 1
+  const ws = await getWorkspace({ limit: 50 })
+  const s = asObj(ws.executive_summary)
+  return {
+    open: Number(s.approval_bootstrap_candidate_total ?? 0),
+    queued: Number(s.guarded_live_apply_candidate_total ?? 0),
+    error: 0,
+    failed: 0,
+    ready: Number(s.send_ready_total ?? 0),
   }
-  return counts
 }
 
 export async function getRecentErrors(limit = 50) {
   const sb = createAdminClient()
-  // Try tasks first, then runs
-  const { data: taskErrors } = await sb
-    .from('tasks')
-    .select('*')
-    .in('status', ['error', 'failed', 'failed_retried'])
-    .order('created_at', { ascending: false })
-    .limit(limit)
-  const { data: runErrors } = await sb
+  const { data } = await sb
     .from('runs')
     .select('*')
     .in('status', ['error', 'failed'])
     .order('created_at', { ascending: false })
     .limit(limit)
-  return [...(taskErrors ?? []), ...(runErrors ?? [])].slice(0, limit)
+  return data ?? []
 }
 
 export async function getPipelineNodeStats() {
-  const sb = createAdminClient()
-  // Aggregate tasks by pipeline stage/node
-  const { data, error } = await sb
-    .from('tasks')
-    .select('status, created_at')
-    .limit(5000)
-  if (error) console.error('[getPipelineNodeStats]', error.message)
-  return data ?? []
+  const ws = await getWorkspace({ limit: 50 })
+  const s = asObj(ws.executive_summary)
+  return [
+    { name: 'approval', status: 'open', count: Number(s.approval_bootstrap_candidate_total ?? 0), created_at: ws.generated_at },
+    { name: 'execution', status: 'queued', count: Number(s.guarded_live_apply_candidate_total ?? 0), created_at: ws.generated_at },
+    { name: 'ready', status: 'ok', count: Number(s.send_ready_total ?? 0), created_at: ws.generated_at },
+    { name: 'reply_intake', status: 'open', count: Number(s.reply_rows_total ?? 0), created_at: ws.generated_at },
+  ]
 }
 
-export async function getLeadAnalyticsRollup(days = 90, dateFrom?: string, dateTo?: string) {
-  const sb = createAdminClient()
-  const cutoff = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
-  // Try with date filter; fall back to unfiltered if 'day' column missing
-  let { data, error } = dateFrom && dateTo
-    ? await sb.from('lead_analytics_rollup').select('*')
-        .gte('day', dateFrom).lte('day', dateTo)
-        .order('day', { ascending: false }).limit(5000)
-    : await sb.from('lead_analytics_rollup').select('*')
-        .gte('day', cutoff)
-        .order('day', { ascending: false }).limit(5000)
-  if (error?.message.includes('day') && error.message.includes('does not exist')) {
-    ;({ data, error } = await sb.from('lead_analytics_rollup').select('*').limit(5000))
+export async function getLeadAnalytics() {
+  const ws = await getWorkspace({ limit: 100 })
+  return {
+    leads: asArr<Json>(asObj(ws.source_intake).rows),
+    outcomes: [],
+    replies: asArr<Json>(asObj(ws.reply_intake).rows),
+    decisions: asArr<Json>(asObj(ws.decision_command).commands),
   }
-  if (error) console.error('[getLeadAnalyticsRollup]', error.message)
-  return data ?? []
 }
 
-export async function getSourceFunnelDaily(days = 30, dateFrom?: string, dateTo?: string) {
-  const sb = createAdminClient()
-  const cutoff = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
-  let q = sb.from('v_source_funnel_daily').select('*')
-  if (dateFrom && dateTo) {
-    q = q.gte('day', dateFrom).lte('day', dateTo)
-  } else {
-    q = q.gte('day', cutoff)
-  }
-  const { data, error } = await q.order('day', { ascending: false }).limit(10000)
-  if (error) console.error('[getSourceFunnelDaily]', error.message)
-  return data ?? []
+export async function getLeadAnalyticsRollup(days = 90, _dateFrom?: string, _dateTo?: string) {
+  const ws = await getWorkspace({ limit: Math.min(200, Math.max(30, days)) })
+  const s = asObj(ws.executive_summary)
+  const day = String(ws.generated_at ?? '').slice(0, 10)
+  return [
+    { day, metric: 'send_ready_total', leads_cnt: Number(s.send_ready_total ?? 0) },
+    { day, metric: 'approval_bootstrap_candidate_total', leads_cnt: Number(s.approval_bootstrap_candidate_total ?? 0) },
+    { day, metric: 'guarded_live_apply_candidate_total', leads_cnt: Number(s.guarded_live_apply_candidate_total ?? 0) },
+  ]
 }
 
-export async function getFunnelBySourceEntity(days = 30) {
-  const sb = createAdminClient()
-  const cutoff = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
-  // Some deployments may not have a 'day' column — fall back to unfiltered
-  let { data, error } = await sb
-    .from('v_funnel_by_source_entity')
-    .select('*')
-    .gte('day', cutoff)
-    .limit(1000)
-  if (error?.message.includes('day') && error.message.includes('does not exist')) {
-    ;({ data, error } = await sb.from('v_funnel_by_source_entity').select('*').limit(1000))
-  }
-  if (error) console.error('[getFunnelBySourceEntity]', error.message)
-  return data ?? []
+export async function getLeadAnalyticsRollup2(days = 90, dateFrom?: string, dateTo?: string) {
+  return getLeadAnalyticsRollup(days, dateFrom, dateTo)
 }
 
 export async function getKpiTodayCounts() {
-  const sb = createAdminClient()
-  const { data, error } = await sb.from('kpi_today_counts').select('*').limit(1).maybeSingle()
-  if (error) console.error('[getKpiTodayCounts]', error.message)
-  return data ?? {}
+  return getKpiToday()
 }
 
 export async function getLeadExplainRu(leadId: string) {
@@ -209,114 +251,62 @@ export async function getUiTermsRu() {
   return data ?? []
 }
 
-export async function getLeadAnalytics() {
-  const sb = createAdminClient()
-  // Read directly from leads table — no dependency on 'id' column.
-  // Tier 1: extended select with lead_id as PK candidate
-  let leads: Record<string, unknown>[] = []
-  const { data: t1, error: e1 } = await sb
-    .from('leads')
-    .select('lead_id, created_at, source_slug, source, warmth, country, score, outcome, status')
-    .limit(5000)
-  if (!e1) {
-    leads = (t1 ?? []) as Record<string, unknown>[]
-  } else {
-    // Tier 2: drop optional columns; still try created_at
-    const { data: t2, error: e2 } = await sb
-      .from('leads')
-      .select('created_at, source_slug, source, warmth, country, score')
-      .limit(5000)
-    if (!e2) {
-      leads = (t2 ?? []) as Record<string, unknown>[]
-    } else {
-      // Tier 3: created_at may not exist — try inserted_at instead
-      const { data: t3 } = await sb
-        .from('leads')
-        .select('inserted_at, source_slug, source, warmth, country, score')
-        .limit(5000)
-      leads = (t3 ?? []) as Record<string, unknown>[]
-    }
+export async function getSourceFunnelDaily(days = 30, _dateFrom?: string, _dateTo?: string) {
+  const ws = await getWorkspace({ limit: Math.min(200, Math.max(30, days)) })
+  const sourceRows = asArr<Json>(asObj(ws.source_intake).rows)
+  const counts = new Map<string, number>()
+  for (const row of sourceRows) {
+    const key = String(row.source_slug ?? row.source ?? 'unknown')
+    counts.set(key, (counts.get(key) ?? 0) + 1)
   }
-  const { data: outcomes } = await sb.from('lead_outcomes').select('stage, created_at').limit(5000)
-  return { leads, outcomes: outcomes ?? [] }
+  const day = String(ws.generated_at ?? '').slice(0, 10)
+  return Array.from(counts.entries()).map(([source_slug, leads_captured]) => ({
+    day,
+    source_slug,
+    leads_captured,
+    approved: 0,
+    shortlisted: 0,
+    rejected: 0,
+    qualified: 0,
+    contacted: 0,
+    replied: 0,
+    meeting: 0,
+    proposal: 0,
+    won: 0,
+    lost: 0,
+  }))
 }
 
-export async function getLeadAnalyticsRollup2(days = 90, dateFrom?: string, dateTo?: string) {
-  const sb = createAdminClient()
-  const cutoff = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
-
-  // Try rollup2 first (has lead_kind column), fall back to rollup
-  const buildQuery = (table: string) => {
-    const q = dateFrom && dateTo
-      ? sb.from(table).select('*').gte('day', dateFrom).lte('day', dateTo).order('day', { ascending: false }).limit(5000)
-      : sb.from(table).select('*').gte('day', cutoff).order('day', { ascending: false }).limit(5000)
-    return q
-  }
-
-  let { data, error } = await buildQuery('lead_analytics_rollup2')
-  if (error) {
-    // fallback to rollup
-    ;({ data, error } = await buildQuery('lead_analytics_rollup'))
-    if (error?.message.includes('day') && error.message.includes('does not exist')) {
-      ;({ data, error } = await sb.from('lead_analytics_rollup').select('*').limit(5000))
-    }
-    if (error?.message.includes('lead_analytics_rollup')) {
-      ;({ data, error } = await sb.from('lead_analytics_rollup2').select('*').limit(5000))
-    }
-  }
-  if (error) console.error('[getLeadAnalyticsRollup2]', error.message)
-  return data ?? []
+export async function getFunnelBySourceEntity(days = 30) {
+  return getSourceFunnelDaily(days)
 }
 
-/** Raw stage transitions per lead: from_stage, to_stage, hours_elapsed, source_slug */
-export async function getStageTransitions() {
-  const sb = createAdminClient()
-  const { data, error } = await sb.from('v_stage_transitions').select('*').limit(20000)
-  if (error) console.error('[getStageTransitions]', error.message)
-  return data ?? []
-}
-
-/** Latest stage per lead (current_stage = last event by created_at) */
 export async function getLeadCurrentStage() {
-  const sb = createAdminClient()
-  const { data, error } = await sb.from('v_lead_current_stage').select('*').limit(10000)
-  if (error) console.error('[getLeadCurrentStage]', error.message)
-  return data ?? []
+  const ws = await getWorkspace({ limit: 100 })
+  return asArr<Json>(asObj(ws.decision_command).commands).map((r) => ({
+    lead_id: r.lead_id ?? r.target_queue_id,
+    source_slug: r.source_slug ?? r.channel ?? 'reddit',
+    current_stage: r.command_mode ?? r.decision_code ?? 'unknown',
+  }))
 }
 
-/** Max-ever stage per lead (ever_stage = highest stage order reached) + rollback_count */
 export async function getLeadEverStage() {
-  const sb = createAdminClient()
-  const { data, error } = await sb.from('v_lead_ever_stage').select('*').limit(10000)
-  if (error) console.error('[getLeadEverStage]', error.message)
-  return data ?? []
+  return getLeadCurrentStage()
+}
+
+export async function getStageTransitions() {
+  const ws = await getWorkspace({ limit: 50 })
+  return asArr<Json>(asObj(ws.next_action).rows).map((r) => ({
+    from_stage: r.current_stage ?? r.current_status ?? 'unknown',
+    to_stage: r.next_action_label ?? r.next_status ?? 'unknown',
+    hours_elapsed: null,
+    source_slug: r.source_slug ?? r.channel ?? 'reddit',
+  }))
 }
 
 export async function getSchemaKeys() {
-  const sb = createAdminClient()
-  const sources: Record<string, string[]> = {}
-
-  const tables = [
-    'leads', 'tasks', 'runs', 'signals', 'decision_log', 'domain_rules',
-    'sources', 'queries', 'lead_outcomes', 'digests', 'signal_detectors', 'keyword_master',
-  ]
-  const views = [
-    'v_kpi_today', 'mv_inbox_b2b_hot', 'mv_inbox_people_hot',
-    'mv_inbox_event_review', 'mv_inbox_extract_people',
-  ]
-
-  for (const t of [...tables, ...views]) {
-    try {
-      const { data } = await sb.from(t).select('*').limit(1)
-      if (data && data.length > 0) {
-        sources[t] = Object.keys(data[0])
-      } else {
-        sources[t] = []
-      }
-    } catch {
-      sources[t] = ['[error]']
-    }
+  return {
+    workspace_rpc: ['public.feya_launch_workspace_snapshot', 'public.feya_next_approval_wave_snapshot', 'public.feya_operator_cockpit_v5_snapshot'],
+    execution_tables: ['feya_sales.followup_queue', 'feya_sales.touchpoints', 'feya_sales.approval_logs', 'feya_sales.runtime_execution_actions'],
   }
-
-  return sources
 }
