@@ -22,9 +22,7 @@ import {
   type InboxTab,
 } from '@/lib/api/queries'
 
-// Force Node.js runtime — avoids edge environment missing process.env / Node APIs
 export const runtime = 'nodejs'
-// Always dynamic — never cache API responses
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
@@ -53,7 +51,6 @@ const ALLOWED_QUERIES = [
 type QueryName = (typeof ALLOWED_QUERIES)[number]
 
 export async function GET(req: NextRequest) {
-  // Guard: service role key must be present before touching Supabase
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return Response.json(
       { error: 'Server misconfiguration: missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY' },
@@ -74,6 +71,7 @@ export async function GET(req: NextRequest) {
 
     switch (name) {
       case 'kpi_today':
+      case 'v_kpi_today':
         data = await getKpiToday()
         break
 
@@ -128,12 +126,12 @@ export async function GET(req: NextRequest) {
       }
 
       case 'lead_analytics_rollup2': {
-        const days2 = req.nextUrl.searchParams.get('limit')
+        const days = req.nextUrl.searchParams.get('limit')
           ? Number(req.nextUrl.searchParams.get('limit'))
           : 90
-        const dateFrom2 = req.nextUrl.searchParams.get('date_from') ?? undefined
-        const dateTo2 = req.nextUrl.searchParams.get('date_to') ?? undefined
-        data = await getLeadAnalyticsRollup2(days2, dateFrom2, dateTo2)
+        const dateFrom = req.nextUrl.searchParams.get('date_from') ?? undefined
+        const dateTo = req.nextUrl.searchParams.get('date_to') ?? undefined
+        data = await getLeadAnalyticsRollup2(days, dateFrom, dateTo)
         break
       }
 
@@ -158,26 +156,21 @@ export async function GET(req: NextRequest) {
         data = await getSchemaKeys()
         break
 
-      // Alias: v_kpi_today is the same underlying view as kpi_today
-      case 'v_kpi_today':
-        data = await getKpiToday()
-        break
-
       case 'v_source_funnel_daily': {
-        const sfDays = req.nextUrl.searchParams.get('limit')
+        const days = req.nextUrl.searchParams.get('limit')
           ? Number(req.nextUrl.searchParams.get('limit'))
           : 30
-        const sfFrom = req.nextUrl.searchParams.get('date_from') ?? undefined
-        const sfTo = req.nextUrl.searchParams.get('date_to') ?? undefined
-        data = await getSourceFunnelDaily(sfDays, sfFrom, sfTo)
+        const dateFrom = req.nextUrl.searchParams.get('date_from') ?? undefined
+        const dateTo = req.nextUrl.searchParams.get('date_to') ?? undefined
+        data = await getSourceFunnelDaily(days, dateFrom, dateTo)
         break
       }
 
       case 'v_funnel_by_source_entity': {
-        const fbDays = req.nextUrl.searchParams.get('limit')
+        const days = req.nextUrl.searchParams.get('limit')
           ? Number(req.nextUrl.searchParams.get('limit'))
           : 30
-        data = await getFunnelBySourceEntity(fbDays)
+        data = await getFunnelBySourceEntity(days)
         break
       }
 
