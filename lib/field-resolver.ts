@@ -18,7 +18,28 @@ export function resolveField<T = unknown>(
   return undefined
 }
 
-/** Lead shape normalised from various possible column names */
+export interface ActionIntentShape {
+  action_intent_code?: string
+  intent_label_ru?: string
+  intent_description_ru?: string
+  action_code?: string
+  target_runtime?: string
+  payload_mode?: string
+  requires_confirmation?: boolean
+  owner_control_sensitive?: boolean
+}
+
+export interface AvailableActionShape {
+  action_code?: string
+  action_label_ru?: string
+  action_kind?: string
+  trigger_mode?: string
+  runtime_target?: string
+  explain_before_run?: boolean
+  owner_control_default?: boolean
+}
+
+/** Lead shape normalised from FEYA queue / workspace / inbox views */
 export interface NormalisedLead {
   id: string | number
   title: string
@@ -27,7 +48,7 @@ export interface NormalisedLead {
   score?: number
   warmth?: string
   source?: string
-  source_slug?: string  // same value as source; kept for analytics page countBy
+  source_slug?: string
   country?: string
   status?: string
   created_at?: string
@@ -37,44 +58,87 @@ export interface NormalisedLead {
   source_entity?: string
   reach?: number
   event?: string
-  // enriched view fields
-  evidence_text?: string        // why this is a lead (pre-computed, primary)
-  match_terms?: string[]        // keyword/trigger matches
-  contact_path?: string         // primary contact URL or handle path
-  username?: string             // social handle / username
-  query_keyword?: string        // keyword that triggered discovery
-  query_purpose?: string        // declared purpose of the search query
-  blocked_reason?: string       // why lead was blocked (if any)
-  // B2B/OSM fields
+  evidence_text?: string
+  match_terms?: string[]
+  contact_path?: string
+  username?: string
+  query_keyword?: string
+  query_purpose?: string
+  blocked_reason?: string
   business_name?: string
   business_phone?: string
   business_website?: string
-  amenity?: string              // OSM amenity type (e.g. "theatre", "restaurant")
-  // raw row for anything else
+  amenity?: string
+  scenario_cluster_name?: string
+  scenario_cluster_code?: string
+  segment_family?: string
+  channel_mode?: string
+  decision_stage_family?: string
+  decision_reply_state?: string
+  next_best_action?: string
+  execution_mode_ru?: string
+  operator_status_ru?: string
+  reply_state_ru?: string
+  stage_family_ru?: string
+  framework_objective?: string
+  desired_response?: string
+  tone_mode?: string
+  offer_angle?: string
+  framework_cta_mode?: string
+  draft_request_id?: string
+  draft_status?: string
+  approval_status?: string
+  handoff_id?: string
+  handoff_status?: string
+  owner_control_required?: boolean
+  binding_title_ru?: string
+  binding_description_ru?: string
+  panel_slot?: string
+  queue_row_state_ru?: string
+  card_title_ru?: string
+  card_description_ru?: string
+  recommendation_ru?: string
+  risk_explanation_ru?: string
+  handoff_summary_ru?: string
+  control_mode?: string
+  draft_text?: string
+  reasoning_text?: string
+  action_intents?: ActionIntentShape[]
+  available_actions?: AvailableActionShape[]
+  visible_fields?: unknown
+  runtime_rules?: unknown
   _raw: AnyRecord
+}
+
+function toArray<T = unknown>(value: unknown): T[] | undefined {
+  return Array.isArray(value) ? (value as T[]) : undefined
 }
 
 export function normaliseLead(row: AnyRecord): NormalisedLead {
   const id = resolveField<string | number>(row, 'id', 'lead_id', 'uid') ?? ''
-  const title = resolveField<string>(row, 'title', 'name', 'heading', 'subject', 'url') ?? '—'
-  const url = resolveField<string>(row, 'url', 'link', 'source_url', 'href') ?? ''
+  const businessName = resolveField<string>(row, 'business_name', 'company_name', 'org_name')
+  const title = resolveField<string>(row, 'title', 'name', 'heading', 'subject')
+    ?? businessName
+    ?? resolveField<string>(row, 'username', 'url')
+    ?? '—'
+  const url = resolveField<string>(row, 'url', 'link', 'source_url', 'href')
+    ?? resolveField<string>(row, 'business_website')
+    ?? ''
   const domain = resolveField<string>(row, 'domain', 'source_domain', 'host')
   const score = resolveField<number>(row, 'score', 'lead_score', 'intent_score', 'quality_score')
-  const warmth = String(row['warmth'] ?? resolveField<string>(row, 'warmth_level', 'intent', 'tier') ?? '')  || undefined
+  const warmth = String(row['warmth'] ?? resolveField<string>(row, 'warmth_level', 'intent', 'tier') ?? '') || undefined
   const resolvedSource = resolveField<string>(row, 'source_slug', 'source', 'source_name', 'channel', 'platform')
   const source = resolvedSource
   const source_slug = resolvedSource
   const country = resolveField<string>(row, 'country', 'geo', 'country_code', 'location')
-  const status = resolveField<string>(row, 'status', 'state', 'outcome', 'stage')
-  const created_at = resolveField<string>(row, 'created_at', 'inserted_at', 'detected_at', 'ts', 'timestamp')
-  const snippet = resolveField<string>(row, 'snippet', 'body', 'text', 'content', 'description', 'summary')
+  const status = resolveField<string>(row, 'status', 'state', 'outcome', 'stage', 'queue_row_state_ru', 'operator_status_ru')
+  const created_at = resolveField<string>(row, 'lead_created_at', 'created_at', 'inserted_at', 'detected_at', 'ts', 'timestamp')
+  const snippet = resolveField<string>(row, 'snippet', 'body', 'text', 'content', 'description', 'summary', 'latest_summary')
   const keyword_used = resolveField<string>(row, 'keyword_used', 'keyword', 'query_keyword', 'kw')
   const query_string = resolveField<string>(row, 'query_string', 'query', 'search_query', 'q')
   const source_entity = resolveField<string>(row, 'source_entity', 'entity', 'actor', 'author', 'subreddit')
   const reach = resolveField<number>(row, 'reach', 'reach_score', 'audience', 'followers')
   const event = resolveField<string>(row, 'event', 'event_name', 'event_type', 'trigger')
-
-  // Enriched view fields
   const evidence_text = resolveField<string>(row, 'evidence_text')
   const rawTerms = row['match_terms']
   const match_terms: string[] | undefined = Array.isArray(rawTerms)
@@ -87,8 +151,6 @@ export function normaliseLead(row: AnyRecord): NormalisedLead {
   const query_keyword = resolveField<string>(row, 'query_keyword')
   const query_purpose = resolveField<string>(row, 'query_purpose')
   const blocked_reason = resolveField<string>(row, 'blocked_reason')
-  // B2B/OSM fields
-  const business_name = resolveField<string>(row, 'business_name', 'company_name', 'org_name')
   const business_phone = resolveField<string>(row, 'business_phone', 'phone', 'tel')
   const business_website = resolveField<string>(row, 'business_website', 'website', 'web', 'homepage')
   const amenity = resolveField<string>(row, 'amenity', 'amenity_type', 'place_type', 'category')
@@ -118,10 +180,48 @@ export function normaliseLead(row: AnyRecord): NormalisedLead {
     query_keyword,
     query_purpose,
     blocked_reason,
-    business_name,
+    business_name: businessName,
     business_phone,
     business_website,
     amenity,
+    scenario_cluster_name: resolveField<string>(row, 'scenario_cluster_name'),
+    scenario_cluster_code: resolveField<string>(row, 'scenario_cluster_code'),
+    segment_family: resolveField<string>(row, 'segment_family'),
+    channel_mode: resolveField<string>(row, 'channel_mode'),
+    decision_stage_family: resolveField<string>(row, 'decision_stage_family'),
+    decision_reply_state: resolveField<string>(row, 'decision_reply_state'),
+    next_best_action: resolveField<string>(row, 'next_best_action'),
+    execution_mode_ru: resolveField<string>(row, 'execution_mode_ru'),
+    operator_status_ru: resolveField<string>(row, 'operator_status_ru'),
+    reply_state_ru: resolveField<string>(row, 'reply_state_ru'),
+    stage_family_ru: resolveField<string>(row, 'stage_family_ru'),
+    framework_objective: resolveField<string>(row, 'framework_objective'),
+    desired_response: resolveField<string>(row, 'desired_response'),
+    tone_mode: resolveField<string>(row, 'tone_mode'),
+    offer_angle: resolveField<string>(row, 'offer_angle'),
+    framework_cta_mode: resolveField<string>(row, 'framework_cta_mode'),
+    draft_request_id: resolveField<string>(row, 'draft_request_id'),
+    draft_status: resolveField<string>(row, 'draft_status'),
+    approval_status: resolveField<string>(row, 'approval_status'),
+    handoff_id: resolveField<string>(row, 'handoff_id'),
+    handoff_status: resolveField<string>(row, 'handoff_status'),
+    owner_control_required: Boolean(resolveField<boolean>(row, 'owner_control_required')),
+    binding_title_ru: resolveField<string>(row, 'binding_title_ru'),
+    binding_description_ru: resolveField<string>(row, 'binding_description_ru'),
+    panel_slot: resolveField<string>(row, 'panel_slot'),
+    queue_row_state_ru: resolveField<string>(row, 'queue_row_state_ru'),
+    card_title_ru: resolveField<string>(row, 'card_title_ru'),
+    card_description_ru: resolveField<string>(row, 'card_description_ru'),
+    recommendation_ru: resolveField<string>(row, 'recommendation_ru'),
+    risk_explanation_ru: resolveField<string>(row, 'risk_explanation_ru'),
+    handoff_summary_ru: resolveField<string>(row, 'handoff_summary_ru'),
+    control_mode: resolveField<string>(row, 'control_mode'),
+    draft_text: resolveField<string>(row, 'draft_text'),
+    reasoning_text: resolveField<string>(row, 'reasoning_text'),
+    action_intents: toArray<ActionIntentShape>(row['action_intents']),
+    available_actions: toArray<AvailableActionShape>(row['available_actions']),
+    visible_fields: row['visible_fields'],
+    runtime_rules: row['runtime_rules'],
     _raw: row,
   }
 }
@@ -153,11 +253,10 @@ export function normaliseRun(row: AnyRecord): NormalisedRun {
   }
 }
 
-/** Generate "why is this a lead" heuristics from a NormalisedLead */
-const WTB_PATTERNS = /\b(wtb|looking for|want to buy|iso|need|hire|seeking|куплю|ищу|нужен|хочу купить)\b/i
-const COMMISSION_PATTERNS = /\b(commiss|% off|agency|broker|partner|партнёр|агент|комисс)\b/i
-const CONTACT_PATTERNS = /\b(contact|email|dm|pm|direct|написать|связаться|telegram|whatsapp)\b/i
-const B2B_PATTERNS = /\b(company|corp|llc|ltd|gmbh|inc|бизнес|компания|корпорация)\b/i
+const WTB_PATTERNS = /(wtb|looking for|want to buy|iso|need|hire|seeking|куплю|ищу|нужен|хочу купить)/i
+const COMMISSION_PATTERNS = /(commiss|% off|agency|broker|partner|партнёр|агент|комисс)/i
+const CONTACT_PATTERNS = /(contact|email|dm|pm|direct|написать|связаться|telegram|whatsapp)/i
+const B2B_PATTERNS = /(company|corp|llc|ltd|gmbh|inc|бизнес|компания|корпорация)/i
 
 export function generateLeadReasons(lead: NormalisedLead): string[] {
   const reasons: string[] = []
@@ -173,6 +272,8 @@ export function generateLeadReasons(lead: NormalisedLead): string[] {
   if (B2B_PATTERNS.test(text)) reasons.push('B2B контекст')
   if (lead.reach && lead.reach > 1000) reasons.push(`Высокий охват: ${lead.reach.toLocaleString()}`)
   if (lead.keyword_used) reasons.push(`Ключевое слово: «${lead.keyword_used}»`)
+  if (lead.scenario_cluster_name) reasons.push(`Сценарий FEYA: ${lead.scenario_cluster_name}`)
+  if (lead.next_best_action) reasons.push(`Следующий шаг: ${lead.next_best_action}`)
   if (reasons.length === 0) reasons.push('Совпадение по поисковому запросу')
 
   return reasons

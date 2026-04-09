@@ -1,6 +1,5 @@
 'use client'
 
-import { useState } from 'react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -8,12 +7,11 @@ import { Search, X } from 'lucide-react'
 
 export interface InboxFilters {
   search: string
-  warmth: string
   source: string
-  country: string
   status: string
-  scoreMin: string
-  scoreMax: string
+  country: string
+  scenario: string
+  mode: string
 }
 
 interface Props {
@@ -27,86 +25,65 @@ export function InboxFilterBar({ filters, onChange }: Props) {
   }
 
   function reset() {
-    onChange({ search: '', warmth: '', source: '', country: '', status: '', scoreMin: '', scoreMax: '' })
+    onChange({ search: '', source: '', status: '', country: '', scenario: '', mode: '' })
   }
 
   const hasFilters = Object.values(filters).some(Boolean)
 
   return (
     <div className="flex flex-wrap gap-2 items-center">
-      <div className="relative flex-1 min-w-[200px]">
+      <div className="relative flex-1 min-w-[220px]">
         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
         <Input
-          placeholder="Поиск по заголовку или URL…"
+          placeholder="Поиск по объекту, источнику, сценарию…"
           value={filters.search}
           onChange={(e) => update('search', e.target.value)}
-          className="pl-8 h-8 text-xs"
+          className="pl-8 h-9 text-xs"
         />
       </div>
 
-      <Select value={filters.warmth || 'all'} onValueChange={(v) => update('warmth', v === 'all' ? '' : v)}>
-        <SelectTrigger className="w-32 h-8 text-xs">
-          <SelectValue placeholder="Интент" />
+      <Input
+        placeholder="Сценарий"
+        value={filters.scenario}
+        onChange={(e) => update('scenario', e.target.value)}
+        className="w-36 h-9 text-xs"
+      />
+
+      <Select value={filters.mode || 'all'} onValueChange={(v) => update('mode', v === 'all' ? '' : v)}>
+        <SelectTrigger className="w-40 h-9 text-xs">
+          <SelectValue placeholder="Режим" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="all">Все</SelectItem>
-          <SelectItem value="hot">🔴 Горячий</SelectItem>
-          <SelectItem value="warm">🟡 Тёплый</SelectItem>
-          <SelectItem value="cold">🔵 Холодный</SelectItem>
+          <SelectItem value="all">Все режимы</SelectItem>
+          <SelectItem value="Сценарный режим">Сценарный режим</SelectItem>
+          <SelectItem value="С поддержкой FEYA">С поддержкой FEYA</SelectItem>
+          <SelectItem value="Личный режим">Личный режим</SelectItem>
         </SelectContent>
       </Select>
-
-      <Select value={filters.status || 'all'} onValueChange={(v) => update('status', v === 'all' ? '' : v)}>
-        <SelectTrigger className="w-32 h-8 text-xs">
-          <SelectValue placeholder="Статус" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">Все</SelectItem>
-          <SelectItem value="open">Открытые</SelectItem>
-          <SelectItem value="approved">Одобренные</SelectItem>
-          <SelectItem value="shortlisted">Шортлист</SelectItem>
-          <SelectItem value="rejected">Отклонённые</SelectItem>
-        </SelectContent>
-      </Select>
-
-      <div className="flex items-center gap-1">
-        <Input
-          placeholder="Скор от"
-          value={filters.scoreMin}
-          onChange={(e) => update('scoreMin', e.target.value)}
-          className="w-20 h-8 text-xs"
-          type="number"
-          min={0}
-          max={100}
-        />
-        <span className="text-muted-foreground text-xs">—</span>
-        <Input
-          placeholder="до"
-          value={filters.scoreMax}
-          onChange={(e) => update('scoreMax', e.target.value)}
-          className="w-16 h-8 text-xs"
-          type="number"
-          min={0}
-          max={100}
-        />
-      </div>
 
       <Input
         placeholder="Источник"
         value={filters.source}
         onChange={(e) => update('source', e.target.value)}
-        className="w-28 h-8 text-xs"
+        className="w-28 h-9 text-xs"
       />
 
       <Input
-        placeholder="Страна"
+        placeholder="Состояние"
+        value={filters.status}
+        onChange={(e) => update('status', e.target.value)}
+        className="w-32 h-9 text-xs"
+      />
+
+      <Input
+        placeholder="Гео"
         value={filters.country}
         onChange={(e) => update('country', e.target.value)}
-        className="w-24 h-8 text-xs"
+        className="w-24 h-9 text-xs"
       />
 
       {hasFilters && (
-        <Button variant="ghost" size="sm" onClick={reset} className="h-8 text-xs gap-1 text-muted-foreground">
+        <Button variant="ghost" size="sm" onClick={reset} className="h-9 text-xs gap-1 text-muted-foreground">
           <X className="w-3 h-3" /> Сбросить
         </Button>
       )}
