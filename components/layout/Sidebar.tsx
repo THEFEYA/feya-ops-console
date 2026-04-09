@@ -14,7 +14,7 @@ import {
 
 const NAV_ITEMS = [
   { href: '/flow', label: 'Поток', icon: Activity, hint: 'Мониторинг пайплайна' },
-  { href: '/inbox', label: 'Лиды', icon: Inbox, hint: 'Инбокс лидов' },
+  { href: '/inbox', label: 'Очередь', icon: Inbox, hint: 'Очередь и рабочее место FEYA' },
   { href: '/analytics', label: 'Аналитика', icon: BarChart3, hint: 'Графики и KPI' },
   { href: '/control', label: 'Управление', icon: Settings2, hint: 'Запуск функций' },
   { href: '/docs', label: 'Справка', icon: BookOpen, hint: 'Документация' },

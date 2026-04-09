@@ -1,16 +1,10 @@
 import { createAdminClient } from '../supabase/server'
 import { type NormalisedLead, type NormalisedRun, normaliseLead, normaliseRun } from '../field-resolver'
 
-export type InboxTab = 'b2b_hot' | 'people_hot' | 'event_review' | 'extract_people'
+export type InboxTab = 'queue' | 'inbox'
 
 type Json = Record<string, unknown>
-
-type WorkspaceFilters = {
-  limit?: number
-  channel?: string | null
-  avatar_code?: string | null
-  offer_family_code?: string | null
-}
+const FEYA_SCHEMA = 'feya_sales'
 
 export interface InboxDebug {
   view: string
@@ -41,11 +35,11 @@ function lower(value: unknown): string {
   return str(value).toLowerCase()
 }
 
-async function getWorkspace(filters: WorkspaceFilters = {}): Promise<Json> {
+async function getWorkspace(filters: Record<string, unknown> = {}): Promise<Json> {
   const sb = createAdminClient()
   const { data, error } = await sb.rpc('feya_launch_workspace_snapshot', {
-    p_limit: filters.limit ?? 50,
-    p_channel: filters.channel ?? 'reddit',
+    p_limit: Number(filters.limit ?? 50),
+    p_channel: String(filters.channel ?? 'reddit'),
     p_avatar_code: filters.avatar_code ?? null,
     p_offer_family_code: filters.offer_family_code ?? null,
   })
@@ -56,7 +50,7 @@ async function getWorkspace(filters: WorkspaceFilters = {}): Promise<Json> {
   return asObj(data)
 }
 
-export async function getWorkspaceSnapshot(filters: WorkspaceFilters = {}): Promise<Json> {
+export async function getWorkspaceSnapshot(filters: Record<string, unknown> = {}): Promise<Json> {
   return getWorkspace(filters)
 }
 
@@ -69,97 +63,48 @@ function withLeadShape(row: Json, overrides: Partial<NormalisedLead> = {}): Norm
   }
 }
 
-function mapApprovalWaveRow(row: Json): NormalisedLead {
-  const title = str(row.username || row.title || row.target_queue_id || 'Approval item')
-  return withLeadShape(row, {
-    id: str(row.target_queue_id || row.lead_id || row.conversation_id || row.username),
-    title: title.startsWith('u/') ? `Reddit user ${title}` : `Reddit user u/${title}`,
-    url: str(row.url || row.source_url || ''),
-    status: str(row.approval_bootstrap_status || row.rollout_policy_status || ''),
-    source: str(row.conversation_channel || row.source_slug || 'reddit'),
-    source_slug: str(row.conversation_channel || row.source_slug || 'reddit'),
-    created_at: str(row.scheduled_for || row.created_at || row.generated_at || ''),
-    snippet: str(row.offer_family_name || row.next_policy_code || row.blocked_reason || row.policy_code || ''),
-    warmth: undefined,
-    score: undefined,
-    country: undefined,
-    username: str(row.username || ''),
-  })
+function pickLeadTitle(row: Json): string {
+  return str(
+    row.business_name || row.title || row.username || row.url || row.source_url || 'Лид FEYA'
+  )
 }
 
-function mapDecisionRow(row: Json): NormalisedLead {
+function mapQueueRow(row: Json): NormalisedLead {
   return withLeadShape(row, {
-    id: str(row.target_queue_id || row.lead_id || row.conversation_id || row.username),
-    title: str(row.title || row.username || row.command_code || 'Decision item'),
-    url: str(row.url || row.source_url || ''),
-    status: str(row.command_mode || row.decision_code || row.command_code || ''),
-    source: str(row.source_slug || row.channel || 'reddit'),
-    source_slug: str(row.source_slug || row.channel || 'reddit'),
-    created_at: str(row.created_at || row.scheduled_for || ''),
-    snippet: str(row.decision_code || row.command_code || row.policy_code || ''),
-    warmth: undefined,
-    score: undefined,
-    country: undefined,
-    username: str(row.username || ''),
-  })
-}
-
-function mapMessageRow(row: Json): NormalisedLead {
-  return withLeadShape(row, {
-    id: str(row.target_queue_id || row.touchpoint_id || row.username || row.conversation_id),
-    title: str(row.title || row.username || row.offer_family_name || 'Message preview'),
-    status: str(row.preview_status || row.policy_code || row.step_number || 'preview'),
-    source: str(row.source_slug || row.channel || 'reddit'),
-    source_slug: str(row.source_slug || row.channel || 'reddit'),
-    created_at: str(row.created_at || row.updated_at || ''),
-    snippet: str(row.preview_text || row.approved_text || row.draft_text || ''),
-    warmth: undefined,
-    score: undefined,
-    country: undefined,
-    username: str(row.username || ''),
-  })
-}
-
-function mapReplyRow(row: Json): NormalisedLead {
-  return withLeadShape(row, {
-    id: str(row.conversation_id || row.lead_id || row.username),
-    title: str(row.title || row.username || 'Reply intake'),
-    status: str(row.response_class || row.next_action_label || 'reply'),
-    source: str(row.source_slug || row.channel || 'reddit'),
-    source_slug: str(row.source_slug || row.channel || 'reddit'),
-    created_at: str(row.latest_inbound_at || row.created_at || ''),
-    snippet: str(row.latest_inbound_text || row.reply_summary || row.snippet || ''),
-    warmth: undefined,
-    score: undefined,
-    country: undefined,
-    username: str(row.username || ''),
-  })
-}
-
-function mapSourceRow(row: Json): NormalisedLead {
-  return withLeadShape(row, {
-    id: str(row.lead_id || row.signal_id || row.id || row.url || row.username),
-    title: str(row.title || row.business_name || row.username || 'Source intake'),
+    id: str(row.lead_id || row.id),
+    title: pickLeadTitle(row),
     url: str(row.url || row.source_url || row.business_website || ''),
-    status: str(row.status || row.route_policy_code || row.offer_family_code || 'source_signal'),
-    source: str(row.source_slug || row.source || 'source'),
-    source_slug: str(row.source_slug || row.source || 'source'),
-    created_at: str(row.created_at || row.detected_at || row.generated_at || ''),
-    snippet: str(row.snippet || row.evidence_text || row.match_terms || ''),
-    username: str(row.username || ''),
+    source: str(row.source || row.source_slug || ''),
+    source_slug: str(row.source_slug || row.source || ''),
+    country: str(row.geo || row.country || ''),
+    status: str(row.queue_row_state_ru || row.operator_status_ru || row.lead_status || ''),
+    created_at: str(row.lead_created_at || row.detected_at || row.created_at || ''),
+    snippet: str(row.snippet || row.latest_summary || row.contact_path || ''),
+    score: num(row.lead_score, NaN),
+    warmth: str(row.warmth || row.latest_sentiment || ''),
+  })
+}
+
+function mapRouteRow(row: Json): NormalisedLead {
+  return withLeadShape(row, {
+    id: str(row.lead_id || row.id),
+    title: pickLeadTitle(row),
+    url: str(row.url || row.source_url || row.business_website || ''),
+    source: str(row.source || row.source_slug || row.channel_mode || ''),
+    source_slug: str(row.source_slug || row.source || row.channel_mode || ''),
+    status: str(row.operator_status_ru || row.binding_title_ru || row.status || ''),
+    created_at: str(row.created_at || row.lead_created_at || ''),
+    snippet: str(row.binding_description_ru || row.card_description_ru || row.desired_response || ''),
   })
 }
 
 function filterRows(
   rows: NormalisedLead[],
   opts: {
-    scoreMin?: number
-    scoreMax?: number
-    warmth?: string
-    source?: string
-    country?: string
     search?: string
+    source?: string
     status?: string
+    country?: string
   } = {},
 ): { rows: NormalisedLead[]; filtersApplied: string[] } {
   let next = rows
@@ -178,14 +123,20 @@ function filterRows(
       lower(r.url).includes(q) ||
       lower(r.snippet).includes(q) ||
       lower(r.username).includes(q) ||
-      lower(r.business_name).includes(q),
+      lower(r.business_name).includes(q) ||
+      lower(r.scenario_cluster_name).includes(q),
     )
     filtersApplied.push(`search:${opts.search}`)
   }
 
   if (opts.status) {
     const q = opts.status.toLowerCase()
-    next = next.filter((r) => lower(r.status).includes(q))
+    next = next.filter((r) =>
+      lower(r.status).includes(q) ||
+      lower(r.operator_status_ru).includes(q) ||
+      lower(r.queue_row_state_ru).includes(q) ||
+      lower(r.reply_state_ru).includes(q),
+    )
     filtersApplied.push(`status:${opts.status}`)
   }
 
@@ -193,22 +144,6 @@ function filterRows(
     const q = opts.country.toLowerCase()
     next = next.filter((r) => lower(r.country).includes(q))
     filtersApplied.push(`country:${opts.country}`)
-  }
-
-  if (opts.warmth) {
-    const q = opts.warmth.toLowerCase()
-    next = next.filter((r) => lower(r.warmth).includes(q))
-    filtersApplied.push(`warmth:${opts.warmth}`)
-  }
-
-  if (opts.scoreMin !== undefined) {
-    next = next.filter((r) => num(r.score, 0) >= opts.scoreMin)
-    filtersApplied.push(`scoreMin:${opts.scoreMin}`)
-  }
-
-  if (opts.scoreMax !== undefined) {
-    next = next.filter((r) => num(r.score, 0) <= opts.scoreMax)
-    filtersApplied.push(`scoreMax:${opts.scoreMax}`)
   }
 
   return { rows: next, filtersApplied }
@@ -235,42 +170,116 @@ export async function getInbox(
   tab: InboxTab,
   opts: {
     limit?: number
-    scoreMin?: number
-    scoreMax?: number
-    warmth?: string
+    search?: string
     source?: string
     country?: string
-    search?: string
     status?: string
   } = {},
 ): Promise<{ rows: NormalisedLead[]; _debug: InboxDebug }> {
-  const ws = await getWorkspace({ limit: opts.limit ?? 200 })
+  const sb = createAdminClient()
+  const limit = opts.limit ?? 150
 
-  let view = ''
-  let rows: NormalisedLead[] = []
+  if (tab === 'queue') {
+    const { data, error } = await sb
+      .schema(FEYA_SCHEMA)
+      .from('ops_queue_list_layer_view')
+      .select('*')
+      .order('lead_created_at', { ascending: false, nullsFirst: false })
+      .limit(limit)
 
-  if (tab === 'b2b_hot') {
-    view = 'feya_launch_workspace_snapshot.source_intake.rows'
-    rows = asArr<Json>(asObj(ws.source_intake).rows).map(mapSourceRow)
-  } else if (tab === 'people_hot') {
-    view = 'feya_launch_workspace_snapshot.reply_intake.rows'
-    rows = asArr<Json>(asObj(ws.reply_intake).rows).map(mapReplyRow)
-  } else if (tab === 'event_review') {
-    view = 'feya_launch_workspace_snapshot.next_approval_wave.rows'
-    rows = asArr<Json>(asObj(ws.next_approval_wave).rows).map(mapApprovalWaveRow)
-  } else {
-    view = 'feya_launch_workspace_snapshot.decision_command.commands'
-    rows = asArr<Json>(asObj(ws.decision_command).commands).map(mapDecisionRow)
+    if (error) {
+      console.error('[getInbox:queue]', error.message)
+      return {
+        rows: [],
+        _debug: { view: 'feya_sales.ops_queue_list_layer_view', filtersApplied: [error.message], orderUsed: 'lead_created_at desc' },
+      }
+    }
+
+    const rows = asArr<Json>(data).map(mapQueueRow)
+    const filtered = filterRows(rows, opts)
+    return {
+      rows: filtered.rows,
+      _debug: {
+        view: 'feya_sales.ops_queue_list_layer_view',
+        filtersApplied: filtered.filtersApplied,
+        orderUsed: 'lead_created_at desc',
+      },
+    }
   }
 
-  const filtered = filterRows(rows, opts)
+  const { data, error } = await sb
+    .schema(FEYA_SCHEMA)
+    .from('ops_inbox_frontend_view')
+    .select('*')
+    .limit(limit)
 
+  if (error) {
+    console.error('[getInbox:inbox]', error.message)
+    return {
+      rows: [],
+      _debug: { view: 'feya_sales.ops_inbox_frontend_view', filtersApplied: [error.message], orderUsed: 'default' },
+    }
+  }
+
+  const rows = asArr<Json>(data).map(mapRouteRow)
+  const filtered = filterRows(rows, opts)
   return {
     rows: filtered.rows,
     _debug: {
-      view,
+      view: 'feya_sales.ops_inbox_frontend_view',
       filtersApplied: filtered.filtersApplied,
-      orderUsed: 'workspace_snapshot',
+      orderUsed: 'default',
+    },
+  }
+}
+
+export async function getWorkspaceDetail(
+  leadId: string,
+  routeCode: 'queue' | 'inbox' = 'queue',
+): Promise<{ row: NormalisedLead | null; _debug: InboxDebug }> {
+  const sb = createAdminClient()
+
+  const workspacePromise = sb
+    .schema(FEYA_SCHEMA)
+    .from('ops_frontend_scenario_workspace_view')
+    .select('*')
+    .eq('lead_id', leadId)
+    .limit(1)
+    .maybeSingle()
+
+  const routeView = routeCode === 'inbox' ? 'ops_inbox_frontend_view' : 'ops_queue_frontend_view'
+  const routePromise = sb
+    .schema(FEYA_SCHEMA)
+    .from(routeView)
+    .select('*')
+    .eq('lead_id', leadId)
+    .limit(1)
+    .maybeSingle()
+
+  const [{ data: workspaceData, error: workspaceError }, { data: routeData, error: routeError }] = await Promise.all([
+    workspacePromise,
+    routePromise,
+  ])
+
+  if (workspaceError && routeError) {
+    const message = [workspaceError.message, routeError.message].filter(Boolean).join(' | ')
+    return {
+      row: null,
+      _debug: { view: `feya_sales.ops_frontend_scenario_workspace_view + feya_sales.${routeView}`, filtersApplied: [message], orderUsed: 'lead_id exact' },
+    }
+  }
+
+  const merged = {
+    ...(asObj(routeData)),
+    ...(asObj(workspaceData)),
+  }
+
+  return {
+    row: Object.keys(merged).length > 0 ? mapRouteRow(merged) : null,
+    _debug: {
+      view: `feya_sales.ops_frontend_scenario_workspace_view + feya_sales.${routeView}`,
+      filtersApplied: [],
+      orderUsed: 'lead_id exact',
     },
   }
 }
@@ -338,11 +347,11 @@ export async function getLeadAnalytics() {
   ]
 }
 
-export async function getLeadAnalyticsRollup() {
+export async function getLeadAnalyticsRollup(_days?: number, _dateFrom?: string, _dateTo?: string) {
   return []
 }
 
-export async function getLeadAnalyticsRollup2() {
+export async function getLeadAnalyticsRollup2(_days?: number, _dateFrom?: string, _dateTo?: string) {
   return []
 }
 
@@ -380,7 +389,7 @@ export async function getSchemaKeys() {
   return []
 }
 
-export async function getSourceFunnelDaily() {
+export async function getSourceFunnelDaily(_days?: number, _dateFrom?: string, _dateTo?: string) {
   const ws = await getWorkspace({ limit: 50 })
   const s = asObj(ws.executive_summary)
   const day = new Date().toISOString().slice(5, 10)
@@ -391,7 +400,7 @@ export async function getSourceFunnelDaily() {
   ]
 }
 
-export async function getFunnelBySourceEntity() {
+export async function getFunnelBySourceEntity(_days?: number) {
   return []
 }
 

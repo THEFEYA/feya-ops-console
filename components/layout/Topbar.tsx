@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
 
 const PAGE_TITLES: Record<string, string> = {
   '/flow': 'Поток / Мониторинг',
-  '/inbox': 'Лиды / Инбокс',
+  '/inbox': 'Очередь / Рабочее место',
   '/analytics': 'Аналитика',
   '/control': 'Управление',
   '/docs': 'Справка',

@@ -3,6 +3,7 @@ import { authorizeRequest, unauthorizedResponse } from '@/lib/auth'
 import {
   getKpiToday,
   getInbox,
+  getWorkspaceDetail,
   getRunsRecent,
   getTasksStats,
   getRecentErrors,
@@ -31,6 +32,7 @@ const ALLOWED_QUERIES = [
   'kpi_today_counts',
   'v_kpi_today',
   'inbox',
+  'workspace_detail',
   'runs_recent',
   'tasks_stats',
   'recent_errors',
@@ -83,12 +85,9 @@ export async function GET(req: NextRequest) {
         break
 
       case 'inbox': {
-        const tab = (req.nextUrl.searchParams.get('tab') ?? 'b2b_hot') as InboxTab
+        const tab = (req.nextUrl.searchParams.get('tab') ?? 'queue') as InboxTab
         const opts = {
-          limit: toNumber(req.nextUrl.searchParams.get('limit'), 200),
-          scoreMin: req.nextUrl.searchParams.get('scoreMin') ? toNumber(req.nextUrl.searchParams.get('scoreMin'), 0) : undefined,
-          scoreMax: req.nextUrl.searchParams.get('scoreMax') ? toNumber(req.nextUrl.searchParams.get('scoreMax'), 0) : undefined,
-          warmth: req.nextUrl.searchParams.get('warmth') ?? undefined,
+          limit: toNumber(req.nextUrl.searchParams.get('limit'), 150),
           source: req.nextUrl.searchParams.get('source') ?? undefined,
           country: req.nextUrl.searchParams.get('country') ?? undefined,
           search: req.nextUrl.searchParams.get('search') ?? undefined,
@@ -96,6 +95,14 @@ export async function GET(req: NextRequest) {
         }
         const { rows, _debug } = await getInbox(tab, opts)
         return Response.json({ data: rows, _debug })
+      }
+
+      case 'workspace_detail': {
+        const leadId = req.nextUrl.searchParams.get('lead_id') ?? ''
+        const routeCode = (req.nextUrl.searchParams.get('route') ?? 'queue') as 'queue' | 'inbox'
+        if (!leadId) return Response.json({ error: 'lead_id is required' }, { status: 400 })
+        const { row, _debug } = await getWorkspaceDetail(leadId, routeCode)
+        return Response.json({ data: row, _debug })
       }
 
       case 'runs_recent':
